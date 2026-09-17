@@ -22,14 +22,14 @@ func NewInitProvider() azdext.InitProvider {
 }
 
 // Detect inspects a Maven project without executing application code.
-func (p *InitProvider) Detect(_ context.Context, projectPath string) (*azdext.InitResult, error) {
+func (p *InitProvider) Detect(ctx context.Context, projectPath string) (*azdext.InitResult, error) {
 	if _, err := os.Stat(filepath.Join(projectPath, "pom.xml")); errors.Is(err, os.ErrNotExist) {
 		return &azdext.InitResult{}, nil
 	} else if err != nil {
 		return nil, err
 	}
 
-	detected, err := springboot.Detect(projectPath)
+	detected, err := springboot.Analyze(ctx, projectPath)
 	if errors.Is(err, springboot.ErrNotSpringBoot) {
 		return &azdext.InitResult{}, nil
 	}
@@ -47,7 +47,7 @@ func (p *InitProvider) Detect(_ context.Context, projectPath string) (*azdext.In
 	}
 	return &azdext.InitResult{
 		Matched:     true,
-		Name:        detected.Name,
+		Name:        detected.Services[0].Name,
 		Description: "Spring Boot application",
 		Files:       files,
 	}, nil

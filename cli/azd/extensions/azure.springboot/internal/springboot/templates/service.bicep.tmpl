@@ -4,6 +4,7 @@ param containerRegistryName string
 param containerAppsEnvironmentName string
 param imageName string
 param identityId string
+{{RESOURCE_PARAM_DECLARATIONS}}
 
 resource containerRegistry 'Microsoft.ContainerRegistry/registries@2023-07-01' existing = {
   name: containerRegistryName
@@ -40,6 +41,8 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
           identity: identityId
         }
       ]
+      secrets: [
+{{SECRETS}}      ]
     }
     template: {
       scale: {
@@ -50,6 +53,8 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
         {
           name: 'main'
           image: imageName
+          env: [
+{{ENVIRONMENT_VARIABLES}}          ]
           resources: {
             cpu: json('0.5')
             memory: '1Gi'

@@ -24,8 +24,10 @@ module resources 'resources.bicep' = {
     location: location
   }
 }
+{{RESOURCE_MODULES}}
 
 output AZURE_CONTAINER_REGISTRY_ENDPOINT string = resources.outputs.containerRegistryEndpoint
 output AZURE_CONTAINER_REGISTRY_NAME string = resources.outputs.containerRegistryName
 output AZURE_CONTAINER_ENVIRONMENT_NAME string = resources.outputs.containerAppsEnvironmentName
 output SERVICE_{{SERVICE_ENV_NAME}}_IDENTITY_ID string = resources.outputs.managedIdentityId
+{{RESOURCE_OUTPUTS}}

@@ -141,6 +141,11 @@ func readMavenProject(ctx context.Context, mvnCli *maven.Cli, filePath string) (
 func detectDependencies(mavenProject *mavenProject, project *Project) (*Project, error) {
 	databaseDepMap := map[DatabaseDep]struct{}{}
 	for _, dep := range mavenProject.Dependencies {
+		switch dep.Scope {
+		case "test", "provided", "system", "import":
+			continue
+		}
+
 		if (dep.GroupId == "com.mysql" && dep.ArtifactId == "mysql-connector-j") ||
 			(dep.GroupId == "com.azure.spring" && dep.ArtifactId == "spring-cloud-azure-starter-jdbc-mysql") {
 			databaseDepMap[DbMySql] = struct{}{}

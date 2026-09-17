@@ -1,31 +1,49 @@
 # Azure Spring Boot extension prototype
 
-This prototype targets the following experience:
+This prototype targets:
 
 ```text
-existing Spring Boot repository -> azd init --from-code -> azd up -> Azure Container Apps
+existing Spring Boot repository -> azd up -> Azure Container Apps
 ```
 
-The repository does not need an `azure.yaml`, Dockerfile, or infrastructure
-files before the first `azd` command.
+The application repository does not need an `azure.yaml`, Dockerfile, or
+infrastructure files.
 
-## How it works
+## Analysis and generation
 
-- `testdata/spring-todo` is the initial single-module Maven acceptance
-  application.
-- `internal/springboot.Detect` reads `pom.xml` and
-  `application.properties` without executing application code.
-- The `spring-boot` init provider registers with azd before a project exists.
-- `azd init --from-code` asks the provider to inspect the repository, then azd
-  validates and writes the returned project-relative files.
-- Generated files are deterministic and never overwrite existing files.
-- Generated infrastructure includes a resource group, Container Registry,
-  Log Analytics workspace, Container Apps environment, managed identity,
-  AcrPull role assignment, and Container App.
+Analysis and generation are separate:
 
-Bare `azd up` inference is not implemented yet. Initialize the repository first:
+1. Spring inspection identifies the deployable service, port, and health
+   capability.
+2. azd's existing Java detector resolves the effective Maven model.
+3. Runtime dependencies become evidence-backed resource requirements.
+4. Generation consumes only the analysis result.
 
-```text
-azd init --from-code
-azd up
-```
+Container Apps, Container Registry, Log Analytics, and managed identity are the
+current hosting policy. Other resources are conditional:
+
+| Evidence | Generated resource and binding |
+| --- | --- |
+| PostgreSQL runtime dependency | PostgreSQL Flexible Server, database, Key Vault credential, datasource environment variables, and `db.postgres` metadata |
+
+If PostgreSQL is not present in the analysis, none of its Bicep, parameters,
+secrets, environment variables, or `azure.yaml` entries are generated.
+
+## Acceptance application
+
+`testdata/spring-todo` is a Spring Data JDBC application with a standard
+PostgreSQL runtime dependency. It contains no Azure-specific application
+dependency or configuration. Tests use H2 in PostgreSQL compatibility mode.
+
+The generated PostgreSQL binding currently uses a generated administrator
+credential stored in Key Vault. A formal feature should create a least-privilege
+database principal and prefer Microsoft Entra authentication.
+
+## Current boundaries
+
+- One root Maven Spring Boot service.
+- Maven must be trusted because effective-model resolution can load Maven core
+  extensions.
+- PostgreSQL is the only application resource requirement currently translated.
+- Gradle, multi-service translation, profile resolution, and existing-resource
+  selection remain future work.

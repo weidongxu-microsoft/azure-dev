@@ -13,10 +13,12 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
+import org.springframework.test.context.jdbc.Sql;
 import org.springframework.test.web.servlet.MockMvc;
 
 @SpringBootTest
 @AutoConfigureMockMvc
+@Sql(statements = "DELETE FROM \"todos\"", executionPhase = Sql.ExecutionPhase.BEFORE_TEST_METHOD)
 class TodoControllerTest {
 
     @Autowired
@@ -30,7 +32,7 @@ class TodoControllerTest {
                     {"title":"Try the Spring Boot extension"}
                     """))
             .andExpect(status().isCreated())
-            .andExpect(jsonPath("$.id").value(1))
+            .andExpect(jsonPath("$.id").isNumber())
             .andExpect(jsonPath("$.completed").value(false));
 
         mockMvc.perform(get("/api/todos"))
