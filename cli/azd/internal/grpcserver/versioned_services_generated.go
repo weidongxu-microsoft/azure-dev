@@ -37,6 +37,8 @@ const (
 	BetaExtensionService BetaService = "ExtensionService"
 	// BetaFrameworkService identifies the beta FrameworkService registration and its focused overrides.
 	BetaFrameworkService BetaService = "FrameworkService"
+	// BetaInitService identifies the beta InitService registration and its focused overrides.
+	BetaInitService BetaService = "InitService"
 	// BetaProjectService identifies the beta ProjectService registration and its focused overrides.
 	BetaProjectService BetaService = "ProjectService"
 	// BetaPromptService identifies the beta PromptService registration and its focused overrides.
@@ -582,6 +584,7 @@ func registerBetaServices(
 		case BetaEventService:
 		case BetaExtensionService:
 		case BetaFrameworkService:
+		case BetaInitService:
 		case BetaProjectService:
 		case BetaPromptService:
 		case BetaProvisioningService:
@@ -709,6 +712,15 @@ func registerBetaServices(
 		stable:   stableFrameworkService,
 		override: overrideFrameworkService,
 	})
+	overrideInitService := overrides[BetaInitService]
+	if overrideInitService != nil {
+		return fmt.Errorf("beta-only service InitService uses its native implementation and does not accept an override")
+	}
+	betaInitService, ok := serviceImplementations[BetaInitService].(v1beta.InitServiceServer)
+	if !ok {
+		return fmt.Errorf("implementation for beta-only service InitService does not satisfy v1beta.InitServiceServer")
+	}
+	v1beta.RegisterInitServiceServer(registrar, betaInitService)
 	overrideProjectService := overrides[BetaProjectService]
 	if err := validateBetaProjectServiceOverride(overrideProjectService); err != nil {
 		return err

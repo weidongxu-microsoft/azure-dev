@@ -50,6 +50,12 @@ type provisioningRegistrar interface {
 	Close() error
 }
 
+type initRegistrar interface {
+	serviceReceiver
+	Register(ctx context.Context, name string, factory InitProviderFactory) error
+	Close() error
+}
+
 // ServiceTargetRegistration describes a service target provider to register with azd core.
 type ServiceTargetRegistration struct {
 	Host    string
@@ -81,6 +87,12 @@ type ProvisioningProviderRegistration struct {
 	Factory ProvisioningProviderFactory
 }
 
+// InitProviderRegistration describes an init provider to register with azd core.
+type InitProviderRegistration struct {
+	Name    string
+	Factory InitProviderFactory
+}
+
 // ProviderFactory describes a function that creates a provider instance
 type ProviderFactory[T any] func() T
 
@@ -100,12 +112,14 @@ type ExtensionHost struct {
 	serviceHandlers       []ServiceEventRegistration
 	provisioningProviders []ProvisioningProviderRegistration
 	validationChecks      []ValidationCheckRegistration
+	initProviders         []InitProviderRegistration
 
 	serviceTargetManager    serviceTargetRegistrar
 	frameworkServiceManager frameworkServiceRegistrar
 	eventManager            extensionEventManager
 	provisioningManager     provisioningRegistrar
 	validationManager       *ValidationManager
+	initManager             initRegistrar
 }
 
 // NewExtensionHost creates a new ExtensionHost for the supplied azd client.
@@ -155,6 +169,9 @@ func (er *ExtensionHost) initManagers(extensionId string, brokerLogger *log.Logg
 	}
 	if er.validationManager == nil {
 		er.validationManager = NewValidationManager(extensionId, er.client, brokerLogger)
+	}
+	if er.initManager == nil {
+		er.initManager = NewInitManager(extensionId, er.client, brokerLogger)
 	}
 }
 
@@ -212,6 +229,12 @@ func (er *ExtensionHost) WithValidationCheck(
 	return er
 }
 
+// WithInitProvider registers a provider that can initialize a project before azure.yaml exists.
+func (er *ExtensionHost) WithInitProvider(name string, factory InitProviderFactory) *ExtensionHost {
+	er.initProviders = append(er.initProviders, InitProviderRegistration{Name: name, Factory: factory})
+	return er
+}
+
 // Run wires the configured service targets and event handlers, signals readiness, and blocks until shutdown.
 func (er *ExtensionHost) Run(ctx context.Context) error {
 	extensionId := getExtensionId(ctx)
@@ -242,6 +265,7 @@ func (er *ExtensionHost) Run(ctx context.Context) error {
 	hasEventHandlers := len(er.projectHandlers) > 0 || len(er.serviceHandlers) > 0
 	hasProvisioningProviders := len(er.provisioningProviders) > 0
 	hasValidationChecks := len(er.validationChecks) > 0
+	hasInitProviders := len(er.initProviders) > 0
 
 	// Set up defer for cleanup
 	defer func() {
@@ -259,6 +283,9 @@ func (er *ExtensionHost) Run(ctx context.Context) error {
 		}
 		if hasValidationChecks {
 			_ = er.validationManager.Close()
+		}
+		if hasInitProviders {
+			_ = er.initManager.Close()
 		}
 	}()
 
@@ -279,6 +306,9 @@ func (er *ExtensionHost) Run(ctx context.Context) error {
 	}
 	if hasValidationChecks {
 		receivers = append(receivers, er.validationManager)
+	}
+	if hasInitProviders {
+		receivers = append(receivers, er.initManager)
 	}
 
 	// Start receiving messages from active managers in separate goroutines
@@ -315,7 +345,7 @@ func (er *ExtensionHost) Run(ctx context.Context) error {
 	var registrationsWaitGroup sync.WaitGroup
 	totalCount := len(er.serviceTargets) + len(er.frameworkServices) +
 		len(er.projectHandlers) + len(er.serviceHandlers) +
-		len(er.provisioningProviders) + len(er.validationChecks)
+		len(er.provisioningProviders) + len(er.validationChecks) + len(er.initProviders)
 	registrationErrChan := make(chan error, totalCount)
 
 	// Register service targets in parallel
@@ -408,6 +438,19 @@ func (er *ExtensionHost) Run(ctx context.Context) error {
 					"failed to register validation check '%s/%s': %w",
 					r.CheckType, r.RuleID, err,
 				)
+			}
+		})
+	}
+
+	for _, reg := range er.initProviders {
+		if reg.Factory == nil {
+			return fmt.Errorf("init provider factory for %q is nil", reg.Name)
+		}
+
+		r := reg
+		registrationsWaitGroup.Go(func() {
+			if err := er.initManager.Register(ctx, r.Name, r.Factory); err != nil {
+				registrationErrChan <- fmt.Errorf("failed to register init provider %q: %w", r.Name, err)
 			}
 		})
 	}

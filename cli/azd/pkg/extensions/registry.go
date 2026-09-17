@@ -57,6 +57,8 @@ const (
 	// Validation provider enables extensions to contribute validation checks
 	// to azd's validation pipeline (e.g. provision checks during provisioning)
 	ValidationProviderCapability CapabilityType = "validation-provider"
+	// Init providers detect and materialize projects before azure.yaml exists.
+	InitProviderCapability CapabilityType = "init-provider"
 )
 
 type ProviderType string
@@ -66,6 +68,8 @@ const (
 	ServiceTargetProviderType ProviderType = "service-target"
 	// Provisioning provider type for custom infrastructure provisioning experiences
 	ProvisioningProviderType ProviderType = "provisioning-provider"
+	// Init provider type for pre-project application detection and materialization.
+	InitProviderType ProviderType = "init-provider"
 )
 
 // Extension represents an extension in the registry

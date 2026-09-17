@@ -17,11 +17,15 @@ import (
 	"github.com/azure/azure-dev/cli/azd/cmd/actions"
 	"github.com/azure/azure-dev/cli/azd/internal"
 	"github.com/azure/azure-dev/cli/azd/internal/grpcserver"
+	"github.com/azure/azure-dev/cli/azd/internal/repository"
 	"github.com/azure/azure-dev/cli/azd/internal/tracing"
+	"github.com/azure/azure-dev/cli/azd/pkg/environment/azdcontext"
 	"github.com/azure/azure-dev/cli/azd/pkg/extensions"
 	"github.com/azure/azure-dev/cli/azd/pkg/input"
 	"github.com/azure/azure-dev/cli/azd/pkg/ioc"
+	"github.com/azure/azure-dev/cli/azd/pkg/lazy"
 	"github.com/azure/azure-dev/cli/azd/pkg/output"
+	"github.com/azure/azure-dev/cli/azd/pkg/project"
 	"github.com/fatih/color"
 )
 
@@ -32,6 +36,7 @@ var (
 		extensions.FrameworkServiceProviderCapability,
 		extensions.ProvisioningProviderCapability,
 		extensions.ValidationProviderCapability,
+		extensions.InitProviderCapability,
 	}
 )
 
@@ -280,6 +285,53 @@ func (m *ExtensionsMiddleware) Run(ctx context.Context, next NextFn) (*actions.A
 	// Log total time for all extensions to complete startup
 	totalElapsed := time.Since(allExtensionsStartTime)
 	log.Printf("All %d extensions completed startup in %v\n", len(extensionList), totalElapsed)
+
+	if m.options.Name == "up" {
+		wd, err := os.Getwd()
+		if err != nil {
+			return nil, fmt.Errorf("getting current directory: %w", err)
+		}
+		azdCtx := azdcontext.NewAzdContextWithDirectory(wd)
+		if _, err := os.Stat(azdCtx.ProjectPath()); errors.Is(err, os.ErrNotExist) {
+			var initializer *repository.Initializer
+			if err := m.serviceLocator.Resolve(&initializer); err != nil {
+				return nil, err
+			}
+			detected, err := initializer.InitFromProvider(ctx, azdCtx)
+			if err != nil {
+				return nil, err
+			}
+			if detected == nil {
+				return nil, azdcontext.ErrNoProject
+			}
+
+			var lazyAzdCtx *lazy.Lazy[*azdcontext.AzdContext]
+			if err := m.serviceLocator.Resolve(&lazyAzdCtx); err != nil {
+				return nil, err
+			}
+			lazyAzdCtx.SetValue(azdCtx)
+
+			projectConfig, err := project.Load(ctx, azdCtx.ProjectPath())
+			if err != nil {
+				return nil, fmt.Errorf("loading generated %s: %w", azdcontext.ProjectFileName, err)
+			}
+			var lazyProjectConfig *lazy.Lazy[*project.ProjectConfig]
+			if err := m.serviceLocator.Resolve(&lazyProjectConfig); err != nil {
+				return nil, err
+			}
+			lazyProjectConfig.SetValue(projectConfig)
+			ioc.RegisterInstance(m.options.container, azdCtx)
+			ioc.RegisterInstance(m.options.container, projectConfig)
+
+			m.console.Message(ctx, output.WithSuccessFormat(
+				"Detected %s with init provider %s and generated azd project files.",
+				detected.Description,
+				detected.Provider,
+			))
+		} else if err != nil {
+			return nil, fmt.Errorf("checking for %s: %w", azdcontext.ProjectFileName, err)
+		}
+	}
 
 	return next(ctx)
 }

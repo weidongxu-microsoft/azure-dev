@@ -1,0 +1,15 @@
+# yaml-language-server: $schema=../extension.schema.json
+id: azure.springboot
+namespace: spring
+displayName: Azure Spring Boot
+description: Detects Spring Boot applications and initializes them for Azure Container Apps.
+usage: Installed extensions participate automatically in azd init.
+version: 0.1.0
+requiredAzdVersion: ">=1.23.0"
+language: go
+capabilities:
+  - init-provider
+providers:
+  - name: spring-boot
+    type: init-provider
+    description: Detects Maven Spring Boot applications and generates azd project files.

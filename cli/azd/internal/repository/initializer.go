@@ -49,7 +49,25 @@ type Initializer struct {
 	features       *alpha.FeatureManager
 	lazyEnvManager *lazy.Lazy[environment.Manager]
 	statusChecker  RepositoryStatusChecker
+	initProvider   InitProvider
 }
+
+// InitFile is a project-relative file returned by an extension init provider.
+type InitFile struct {
+	Path    string
+	Content []byte
+}
+
+// InitProject describes a project materialized by an extension init provider.
+type InitProject struct {
+	Name        string
+	Description string
+	Files       []InitFile
+	Provider    string
+}
+
+// InitProvider detects an application and returns a materialized azd project.
+type InitProvider func(ctx context.Context, projectPath string) (*InitProject, error)
 
 func NewInitializer(
 	console input.Console,
@@ -65,6 +83,11 @@ func NewInitializer(
 		dotnetCli:      dotnetCli,
 		features:       features,
 	}
+}
+
+// SetInitProvider configures the extension-backed project initializer.
+func (i *Initializer) SetInitProvider(provider InitProvider) {
+	i.initProvider = provider
 }
 
 // NewInitializerWithRepositoryStatusChecker creates an initializer that checks repository metadata before cloning.

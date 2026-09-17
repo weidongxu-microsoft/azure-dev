@@ -5,6 +5,7 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"maps"
 	"os"
@@ -41,6 +42,26 @@ func (i *Initializer) InitFromApp(
 	title := "Scanning app code in current directory"
 	i.console.ShowSpinner(ctx, title, input.Step)
 	wd := azdCtx.ProjectDirectory()
+
+	detected, err := i.InitFromProvider(ctx, azdCtx)
+	if err != nil {
+		i.console.StopSpinner(ctx, title, input.GetStepResultFormat(err))
+		return err
+	}
+	if detected != nil {
+		if envSpecified {
+			if _, err := initializeEnv(); err != nil {
+				return err
+			}
+		}
+		i.console.StopSpinner(ctx, title, input.StepDone)
+		i.console.Message(ctx, output.WithSuccessFormat(
+			"Detected %s with init provider %s.",
+			detected.Description,
+			detected.Provider,
+		))
+		return nil
+	}
 
 	projects := []appdetect.Project{}
 	start := time.Now()
@@ -228,7 +249,7 @@ func (i *Initializer) InitFromApp(
 	tracing.SetUsageAttributes(fields.AppInitLastStep.String("modify"))
 
 	// Confirm selection of services and databases
-	err := detect.Confirm(ctx)
+	err = detect.Confirm(ctx)
 	if err != nil {
 		return err
 	}
@@ -272,6 +293,94 @@ func (i *Initializer) InitFromApp(
 		Message: "Generating " + output.WithHighLightFormat("./next-steps.md"),
 	})
 
+	return nil
+}
+
+// InitFromProvider asks the configured extension provider to detect and materialize a project.
+func (i *Initializer) InitFromProvider(
+	ctx context.Context,
+	azdCtx *azdcontext.AzdContext,
+) (*InitProject, error) {
+	if i.initProvider == nil {
+		return nil, nil
+	}
+
+	detected, err := i.initProvider(ctx, azdCtx.ProjectDirectory())
+	if err != nil || detected == nil {
+		return nil, err
+	}
+	if err := i.materializeInitProject(ctx, azdCtx, detected); err != nil {
+		return nil, err
+	}
+	return detected, nil
+}
+
+func (i *Initializer) materializeInitProject(
+	ctx context.Context,
+	azdCtx *azdcontext.AzdContext,
+	detected *InitProject,
+) error {
+	if len(detected.Files) == 0 {
+		return fmt.Errorf("init provider %q returned no files", detected.Provider)
+	}
+
+	files := slices.Clone(detected.Files)
+	slices.SortFunc(files, func(a, b InitFile) int {
+		return strings.Compare(a.Path, b.Path)
+	})
+	seen := make(map[string]struct{}, len(files))
+	hasProjectFile := false
+	for _, file := range files {
+		clean := filepath.Clean(file.Path)
+		if clean == "." || filepath.IsAbs(clean) || clean == ".." ||
+			strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+			return fmt.Errorf("init provider %q returned unsafe file path %q", detected.Provider, file.Path)
+		}
+		pathKey := filepath.ToSlash(clean)
+		if filepath.Separator == '\\' {
+			pathKey = strings.ToLower(pathKey)
+		}
+		if _, exists := seen[pathKey]; exists {
+			return fmt.Errorf("init provider %q returned duplicate file path %q", detected.Provider, clean)
+		}
+		seen[pathKey] = struct{}{}
+		if clean == azdcontext.ProjectFileName {
+			hasProjectFile = true
+		}
+		target := filepath.Join(azdCtx.ProjectDirectory(), clean)
+		if _, err := os.Stat(target); err == nil {
+			return fmt.Errorf("init provider %q would overwrite existing file %s", detected.Provider, target)
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("checking generated file %s: %w", target, err)
+		}
+	}
+	if !hasProjectFile {
+		return fmt.Errorf("init provider %q did not return %s", detected.Provider, azdcontext.ProjectFileName)
+	}
+
+	var created []string
+	rollback := func() {
+		for _, path := range created {
+			_ = os.Remove(path)
+		}
+	}
+	for _, file := range files {
+		target := filepath.Join(azdCtx.ProjectDirectory(), filepath.Clean(file.Path))
+		if err := os.MkdirAll(filepath.Dir(target), osutil.PermissionDirectory); err != nil {
+			rollback()
+			return fmt.Errorf("creating directory for %s: %w", target, err)
+		}
+		if err := os.WriteFile(target, file.Content, osutil.PermissionFile); err != nil {
+			rollback()
+			return fmt.Errorf("writing %s: %w", target, err)
+		}
+		created = append(created, target)
+	}
+
+	if _, err := project.Load(ctx, azdCtx.ProjectPath()); err != nil {
+		rollback()
+		return fmt.Errorf("validating generated %s: %w", azdcontext.ProjectFileName, err)
+	}
 	return nil
 }
 

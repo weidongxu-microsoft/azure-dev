@@ -41,6 +41,7 @@ type AzdClient struct {
 	copilotClient       v1beta.CopilotServiceClient
 	provisioningClient  ProvisioningServiceClient
 	validationClient    ValidationServiceClient
+	initClient          v1beta.InitServiceClient
 }
 
 // WithAddress sets the address of the `azd` gRPC server.
@@ -305,6 +306,14 @@ func (c *AzdClient) Validation() ValidationServiceClient {
 	}
 
 	return c.validationClient
+}
+
+// Init returns the preview init provider service client.
+func (c *AzdClient) Init() v1beta.InitServiceClient {
+	if c.initClient == nil {
+		c.initClient = v1beta.NewInitServiceClient(c.connection)
+	}
+	return c.initClient
 }
 
 // Telemetry returns the telemetry service client used to report extension

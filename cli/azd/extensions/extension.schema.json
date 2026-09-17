@@ -65,7 +65,9 @@
           "title": "Provider Type",
           "description": "The type of provider.",
           "enum": [
-            "service-target"
+            "service-target",
+            "provisioning-provider",
+            "init-provider"
           ]
         },
         "description": {
@@ -112,7 +114,7 @@
     "capabilities": {
       "type": "array",
       "title": "Capabilities",
-      "description": "List of capabilities provided by the extension. Supported values: custom-commands, lifecycle-events, mcp-server, service-target-provider, framework-service-provider, provisioning-provider, validation-provider, metadata. Select one or more from the allowed list. Each value must be unique. Not required for extension packs, which declare dependencies instead and have no executable.",
+      "description": "List of capabilities provided by the extension. Supported values: custom-commands, lifecycle-events, mcp-server, service-target-provider, framework-service-provider, provisioning-provider, validation-provider, init-provider, metadata. Select one or more from the allowed list. Each value must be unique. Not required for extension packs, which declare dependencies instead and have no executable.",
       "minItems": 1,
       "uniqueItems": true,
       "items": {
@@ -158,6 +160,12 @@
             "const": "validation-provider",
             "title": "Validation Provider",
             "description": "Validation provider enables extensions to contribute checks to azd validation pipelines."
+          },
+          {
+            "type": "string",
+            "const": "init-provider",
+            "title": "Init Provider",
+            "description": "Init providers detect and materialize projects before azure.yaml exists."
           },
           {
             "type": "string",

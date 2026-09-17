@@ -1,0 +1,81 @@
+param environmentName string
+param location string = resourceGroup().location
+param containerRegistryName string
+param containerAppsEnvironmentName string
+param imageName string
+param identityId string
+
+resource containerRegistry 'Microsoft.ContainerRegistry/registries@2023-07-01' existing = {
+  name: containerRegistryName
+}
+
+resource containerAppsEnvironment 'Microsoft.App/managedEnvironments@2024-03-01' existing = {
+  name: containerAppsEnvironmentName
+}
+
+resource app 'Microsoft.App/containerApps@2024-03-01' = {
+  name: '{{SERVICE_NAME}}'
+  location: location
+  tags: {
+    'azd-env-name': environmentName
+    'azd-service-name': '{{SERVICE_NAME}}'
+  }
+  identity: {
+    type: 'UserAssigned'
+    userAssignedIdentities: {
+      '${identityId}': {}
+    }
+  }
+  properties: {
+    managedEnvironmentId: containerAppsEnvironment.id
+    configuration: {
+      ingress: {
+        external: true
+        targetPort: {{TARGET_PORT}}
+        transport: 'auto'
+      }
+      registries: [
+        {
+          server: containerRegistry.properties.loginServer
+          identity: identityId
+        }
+      ]
+    }
+    template: {
+      scale: {
+        minReplicas: 1
+        maxReplicas: 1
+      }
+      containers: [
+        {
+          name: 'main'
+          image: imageName
+          resources: {
+            cpu: json('0.5')
+            memory: '1Gi'
+          }
+          probes: [
+            {
+              type: 'Liveness'
+              httpGet: {
+                path: '/actuator/health/liveness'
+                port: {{TARGET_PORT}}
+                scheme: 'HTTP'
+              }
+            }
+            {
+              type: 'Readiness'
+              httpGet: {
+                path: '/actuator/health/readiness'
+                port: {{TARGET_PORT}}
+                scheme: 'HTTP'
+              }
+            }
+          ]
+        }
+      ]
+    }
+  }
+}
+
+output SERVICE_URL string = 'https://${app.properties.configuration.ingress.fqdn}'

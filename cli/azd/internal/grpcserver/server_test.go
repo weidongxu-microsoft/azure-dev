@@ -181,6 +181,7 @@ func Test_Server_Start(t *testing.T) {
 		azdext.UnimplementedProvisioningServiceServer{},
 		echoValidationService{},
 		newTelemetryService(stubExtensionLookup{extension: reportingExtension}),
+		v1beta.UnimplementedInitServiceServer{},
 	)
 
 	serverInfo, err := server.Start()
@@ -477,6 +478,7 @@ func Test_Server_StreamInterceptor(t *testing.T) {
 		azdext.UnimplementedProvisioningServiceServer{},
 		azdext.UnimplementedValidationServiceServer{},
 		v1beta.UnimplementedTelemetryServiceServer{},
+		v1beta.UnimplementedInitServiceServer{},
 	)
 
 	serverInfo, err := server.Start()
@@ -606,6 +608,7 @@ func TestServer_RelaysExtensionErrorOverGRPC(t *testing.T) {
 		azdext.UnimplementedProvisioningServiceServer{},
 		azdext.UnimplementedValidationServiceServer{},
 		newTelemetryService(stubExtensionLookup{}),
+		v1beta.UnimplementedInitServiceServer{},
 	)
 	serverInfo, err := server.Start()
 	require.NoError(t, err)
@@ -956,6 +959,7 @@ func newTestServer(
 		azdext.UnimplementedProvisioningServiceServer{},
 		azdext.UnimplementedValidationServiceServer{},
 		v1beta.UnimplementedTelemetryServiceServer{},
+		v1beta.UnimplementedInitServiceServer{},
 	).WithOptions(options...)
 }
 
@@ -1675,7 +1679,7 @@ func TestValidateAuthToken_InvalidToken(t *testing.T) {
 
 func TestNewServer(t *testing.T) {
 	t.Parallel()
-	s := NewServer(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	s := NewServer(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 	require.NotNil(t, s)
 	assert.Nil(t, s.grpcServer, "grpcServer should be nil before Start")
 }

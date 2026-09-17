@@ -1,0 +1,52 @@
+// Copyright (c) Microsoft Corporation. All rights reserved.
+// Licensed under the MIT License.
+syntax = "proto3";
+
+package azd.extensions.v1beta;
+
+option go_package = "github.com/azure/azure-dev/cli/azd/pkg/azdext/contracts/v1beta;v1beta";
+
+import "azd/extensions/v1beta/errors.proto";
+
+// InitService lets extensions detect and materialize projects before azure.yaml exists.
+service InitService {
+  rpc Stream(stream InitMessage) returns (stream InitMessage);
+}
+
+message InitMessage {
+  string request_id = 1;
+  ExtensionError error = 99;
+  oneof message_type {
+    RegisterInitProviderRequest register_init_provider_request = 2;
+    RegisterInitProviderResponse register_init_provider_response = 3;
+    InitDetectRequest detect_request = 4;
+    InitDetectResponse detect_response = 5;
+  }
+}
+
+message RegisterInitProviderRequest {
+  string name = 1;
+}
+
+message RegisterInitProviderResponse {}
+
+message InitDetectRequest {
+  string project_path = 1;
+  string provider_name = 2;
+}
+
+message InitDetectResponse {
+  bool matched = 1;
+  InitProject project = 2;
+}
+
+message InitProject {
+  string name = 1;
+  string description = 2;
+  repeated InitFile files = 3;
+}
+
+message InitFile {
+  string path = 1;
+  bytes content = 2;
+}

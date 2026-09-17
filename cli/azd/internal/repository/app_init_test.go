@@ -5,14 +5,104 @@ package repository
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/azure/azure-dev/cli/azd/internal"
 	"github.com/azure/azure-dev/cli/azd/internal/appdetect"
+	"github.com/azure/azure-dev/cli/azd/pkg/environment/azdcontext"
 	"github.com/azure/azure-dev/cli/azd/pkg/project"
 	"github.com/stretchr/testify/require"
 )
+
+func TestInitializer_materializeInitProject(t *testing.T) {
+	t.Parallel()
+
+	validProject := []byte("name: test\n")
+	tests := []struct {
+		name        string
+		files       []InitFile
+		setup       func(t *testing.T, projectDir string)
+		wantErr     string
+		wantCreated []string
+	}{
+		{
+			name: "success",
+			files: []InitFile{
+				{Path: "infra/main.bicep", Content: []byte("targetScope = 'subscription'\n")},
+				{Path: "azure.yaml", Content: validProject},
+			},
+			wantCreated: []string{"azure.yaml", "infra/main.bicep"},
+		},
+		{
+			name:    "unsafe parent path",
+			files:   []InitFile{{Path: "../outside.txt"}, {Path: "azure.yaml", Content: validProject}},
+			wantErr: "unsafe file path",
+		},
+		{
+			name: "duplicate path",
+			files: []InitFile{
+				{Path: "infra/main.bicep"},
+				{Path: filepath.Join("infra", ".", "main.bicep")},
+				{Path: "azure.yaml", Content: validProject},
+			},
+			wantErr: "duplicate file path",
+		},
+		{
+			name:    "missing project file",
+			files:   []InitFile{{Path: "infra/main.bicep"}},
+			wantErr: "did not return azure.yaml",
+		},
+		{
+			name:  "existing file",
+			files: []InitFile{{Path: "azure.yaml", Content: validProject}},
+			setup: func(t *testing.T, projectDir string) {
+				require.NoError(t, os.WriteFile(filepath.Join(projectDir, "azure.yaml"), []byte("existing"), 0600))
+			},
+			wantErr: "would overwrite existing file",
+		},
+		{
+			name: "invalid project rolls back",
+			files: []InitFile{
+				{Path: "infra/main.bicep", Content: []byte("content")},
+				{Path: "azure.yaml", Content: []byte("invalid: [")},
+			},
+			wantErr: "validating generated azure.yaml",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			projectDir := t.TempDir()
+			if tt.setup != nil {
+				tt.setup(t, projectDir)
+			}
+
+			initializer := new(Initializer)
+			err := initializer.materializeInitProject(
+				t.Context(),
+				azdcontext.NewAzdContextWithDirectory(projectDir),
+				&InitProject{Provider: "test", Files: tt.files},
+			)
+
+			if tt.wantErr != "" {
+				require.ErrorContains(t, err, tt.wantErr)
+				if tt.name == "invalid project rolls back" {
+					require.NoFileExists(t, filepath.Join(projectDir, "azure.yaml"))
+					require.NoFileExists(t, filepath.Join(projectDir, "infra", "main.bicep"))
+				}
+				return
+			}
+
+			require.NoError(t, err)
+			for _, path := range tt.wantCreated {
+				require.FileExists(t, filepath.Join(projectDir, path))
+			}
+		})
+	}
+}
 
 func TestInitializer_prjConfigFromDetect(t *testing.T) {
 	t.Parallel()
