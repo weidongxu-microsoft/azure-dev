@@ -59,16 +59,16 @@ are:
 The current prototype covers only a vertical slice of the epic:
 
 ```text
-existing single-module Maven application
-    -> dependency-driven PostgreSQL inference
+existing Maven application or controlled multi-module reactor
+    -> evidence-driven PostgreSQL or Foundry Models inference
     -> generated azure.yaml and Bicep
     -> Azure Container Apps deployment
 ```
 
 It does **not** prototype template-based creation, `azd add` for resources or
 new Spring services, Gradle, existing container builds, App Service, WAR,
-managed Spring components, broader Azure integrations, Spring AI, Spring
-Batch, or Azure Spring Apps migration.
+managed Spring components, broader Azure integrations, Spring Batch, or Azure
+Spring Apps migration.
 
 ## Existing-application flow: critical path
 
@@ -84,8 +84,11 @@ investigate.
   [#9840](https://github.com/Azure/azure-dev/issues/9840), and
   [#9978](https://github.com/Azure/azure-dev/issues/9978).
 - Select an init provider deterministically, invoke it through a versioned
-  extension contract, and return explainable analysis provenance. Tracked by
+  extension contract, let the user accept or reject the detected provider, and
+  return explainable analysis provenance. Tracked by
   [#9838](https://github.com/Azure/azure-dev/issues/9838) and
+  [#9978](https://github.com/Azure/azure-dev/issues/9978), with project
+  translation covered by
   [#9839](https://github.com/Azure/azure-dev/issues/9839).
 - Keep repository writes in azd core with path validation, overwrite
   protection, rollback, and generated-project validation. Tracked by
@@ -132,8 +135,28 @@ investigate.
 
 ### azd and the extension framework
 
+- **Extension discovery bootstrap:** before `azure.yaml` exists, the repository
+  cannot declare `requiredVersions.extensions`. The prototype therefore
+  participates in bare `azd up` only when `azure.springboot` is already
+  installed. A formal design needs a safe way to discover, recommend, install,
+  and start plausible providers without launching every registry extension.
+  Partly tracked by [#9838](https://github.com/Azure/azure-dev/issues/9838),
+  [#9978](https://github.com/Azure/azure-dev/issues/9978), and
+  [#9974](https://github.com/Azure/azure-dev/issues/9974).
+- **User intent and provider opt-out:** finding a Spring Boot project does not
+  prove that the user wants Spring-owned generation rather than generic
+  `azure.yaml` initialization. Interactive init needs a provider choice, and
+  `--no-prompt` needs an explicit or deterministic selection and opt-out rule.
+  Partly tracked by [#9838](https://github.com/Azure/azure-dev/issues/9838) and
+  [#9978](https://github.com/Azure/azure-dev/issues/9978), but the generic-init
+  fallback is not fully specified.
 - **Generated-project lifecycle:** ownership, preview, merge, regeneration, and
   upgrade behavior are not defined for existing or previously generated files.
+  The prototype stops invoking the init provider once `azure.yaml` exists, so
+  later changes such as adding a database dependency, changing a port, adding
+  a module, or changing the Java version do not update infrastructure or
+  bindings. A formal design needs explicit drift detection and a previewable
+  sync operation that preserves user-owned overrides.
   Tracked by [#9839](https://github.com/Azure/azure-dev/issues/9839),
   [#9840](https://github.com/Azure/azure-dev/issues/9840),
   [#9966](https://github.com/Azure/azure-dev/issues/9966), and
@@ -269,8 +292,9 @@ untouched Spring Boot repository -> azd up -> generated azd project -> Azure Con
 The pre-project extension point, safe file materialization, and the deployed
 Container Apps architecture are useful foundations for a formal feature.
 The current iteration also proves that effective Maven analysis can drive
-conditional PostgreSQL generation. It still supports one controlled application
-shape and is not yet general Spring Boot support.
+conditional PostgreSQL generation, while dependency and configuration evidence
+can drive Foundry Models generation. It still supports controlled application
+shapes and is not yet general Spring Boot support.
 
 ## What the prototype proves
 
@@ -285,7 +309,12 @@ The prototype successfully demonstrated that:
 - generated Bicep can provision a passwordless Container Apps deployment; and
 - evidence for a PostgreSQL runtime dependency generates only the required
   PostgreSQL metadata, infrastructure, and application binding; and
-- the deployed application's health and PostgreSQL-backed REST endpoints work.
+- Spring AI plus Azure Identity and `AZURE_INFERENCE_*` configuration generates
+  a Foundry model deployment with managed-identity access; and
+- a Maven reactor can classify shared libraries separately from deployable
+  services and generate an internal service binding; and
+- the PostgreSQL REST, Foundry tool-calling, and multi-service applications
+  work in live deployments.
 
 This validates one major product direction within the epic. It does not
 validate broad compatibility with existing Spring Boot repositories or the
@@ -331,6 +360,36 @@ The live test also exposed important formal-feature risks:
   `SPRING_SQL_INIT_MODE=always` works for this idempotent fixture but cannot be
   assumed for applications using Flyway, Liquibase, Hibernate DDL, or custom
   migration processes.
+
+### Live Foundry Models validation
+
+The Spring AI Todo Agent completed `azd up` in East US 2. The generated
+deployment created a Foundry `AIServices` account, `gpt-4.1-mini`, Container
+Apps hosting, and a user-assigned application identity. The application used
+Microsoft Entra authentication, called the model, invoked its create-Todo tool,
+and returned the updated Todo list.
+
+The live test changed the prototype in three ways:
+
+- Central US Container Apps provisioning failed from temporary regional
+  capacity, so retries must distinguish platform capacity from generator bugs.
+- Corporate policy rejected API-key authentication. The final design disables
+  local auth and grants the application identity Cognitive Services User.
+- A transitive JSON-schema dependency mismatch appeared only when Spring AI
+  generated tool definitions. The fixture now tests tool-schema generation.
+
+### Live multi-service validation
+
+A Maven reactor with a shared contracts library, internal catalog service, and
+public orders service completed `azd up` in West US 3. The extension generated
+two Container Apps, kept catalog internal on port 8081, exposed orders on port
+8080, deployed catalog first, and supplied its URL to orders. Creating and
+listing an order proved the orders-to-catalog call and PostgreSQL persistence.
+
+Core `--from-code` instead classified all three Maven modules as services,
+assigned port 8080 to each, and produced no catalog dependency or URL binding.
+This demonstrates that the extension's incremental value is Spring-aware
+topology, not the basic existing-application workflow.
 
 ## Good foundations for a formal feature
 
@@ -455,6 +514,22 @@ must define how inferred projects interact with:
 Generated metadata should record ownership and provenance. Regeneration should
 produce a preview or merge plan rather than blindly overwrite user files.
 
+### Core existing-application initialization is the baseline
+
+Core `azd init --from-code` already detects Maven Java services and common
+database dependencies, generates a Container Apps resource model, and
+synthesizes most of the same Azure architecture as the extension prototype.
+
+The Spring Todo comparison found a concrete Spring-specific gap: core emits
+generic `POSTGRES_*` variables while the application consumes
+`SPRING_DATASOURCE_*`. Core packaging also encountered a `pack` and Docker API
+compatibility blocker before reaching the Maven build.
+
+See
+[Spring Boot core azd initialization baseline](SPRING-BOOT-CORE-AZD-INIT-BASELINE.md)
+for the experiment, generated model, infrastructure comparison, packaging
+result, and product implications.
+
 ### Current azd relational database binding gap
 
 The built-in azd resource scaffold currently treats PostgreSQL, MySQL, Redis,
@@ -500,23 +575,21 @@ still describes the earlier two-command flow and must be updated if bare
 
 ## Does Spring inspection work generally?
 
-**No. It works for a narrow, known shape and should currently be described as
-a single-module Maven acceptance detector.**
+**No. It works for narrow, known single-module applications and controlled
+multi-module Maven reactors.**
 
 ### Currently supported shape
 
 The repository must have:
 
 - a root `pom.xml`;
-- one Maven module at the repository root;
-- a Spring Boot parent or a direct dependency whose group is
-  `org.springframework.boot`;
-- `spring-boot-maven-plugin` directly under `build.plugins`;
-- `spring-boot-starter-actuator` as a direct dependency;
+- either a root application or Maven reactor leaf modules;
+- each deployable module must have a Spring Boot parent or direct dependency;
+- each deployable module must declare `spring-boot-maven-plugin` and Actuator;
 - a project version directly on the project or parent;
 - optional `server.port` as a literal integer in
   `src/main/resources/application.properties`; and
-- an executable JAR produced under the root `target` directory.
+- an executable JAR produced under the module's `target` directory.
 
 For this shape, the detector and generator are deterministic and were validated
 end to end.
@@ -526,8 +599,8 @@ end to end.
 | Area | Current limitation |
 | --- | --- |
 | Build system | Gradle is unsupported. |
-| Maven layout | Multi-module and nested-module repositories are unsupported. |
-| Effective POM | Parent inheritance, imported BOMs, profiles, properties, plugin management, and dependency management are not resolved. |
+| Maven layout | Controlled reactors work, but nested aggregators, duplicate service names, optional modules, and ambiguous deployable modules are not fully modeled. |
+| Effective POM | Resource dependencies use Maven's effective model, but service metadata and eligibility still rely on limited direct POM inspection. |
 | Maven expressions | Values such as `${revision}` and inherited artifact metadata are not evaluated. |
 | Application type | The detector does not prove that the module is an executable web application. |
 | Configuration | `application.yml`, profile files, environment placeholders, command-line overrides, and management-server settings are ignored. |
@@ -536,7 +609,7 @@ end to end.
 | Java | The POM Java version is recorded but not used; the Dockerfile always builds and runs Java 21. |
 | Maven execution | The generated Dockerfile uses a fixed Maven image and `mvn`, not the repository's Maven wrapper or Maven configuration. |
 | Artifact selection | `target/*.jar` can select the wrong file or fail when multiple JARs exist. |
-| Source layout | The Dockerfile copies only the root `pom.xml` and `src` directory. |
+| Source layout | The Dockerfile copies the full reactor and assumes `mvn -pl <module> -am package` is sufficient. |
 | Naming | The artifact ID is normalized, but Azure and azd length and collision rules are not fully modeled. |
 | Dependencies | PostgreSQL is inferred from the effective Maven model. Service Bus, Event Hubs, Storage, Key Vault usage, and other requirements are not yet inferred. |
 | Runtime settings | Context path, JVM options, memory requirements, environment variables, secrets, scaling, ingress policy, and private networking are not inferred. |
@@ -737,3 +810,776 @@ acceptance fixture while these contracts are redesigned. Its PostgreSQL path
 now demonstrates the intended boundary: analysis emits a resource requirement,
 then generation conditionally emits `azure.yaml`, Bicep, parameters, secrets,
 and application bindings for that requirement.
+
+## Adoption research plan
+
+Before investing in the full epic, validate whether Spring developers would
+adopt a separate `azd` workflow instead of remaining in Maven, Gradle, their
+IDE, or CI.
+
+### Maven and Gradle alternatives
+
+Treat build-tool-native deployment as a primary competitor. Compare:
+
+- Azure Container Apps, App Service, Functions, and Spring Apps Maven plugins;
+- the Azure App Service Gradle plugin;
+- Jib for Maven and Gradle;
+- Spring Boot build-image tasks;
+- Eclipse JKube for Kubernetes and OpenShift; and
+- comparable cloud-provider Maven and Gradle deployment plugins.
+
+For each tool, record:
+
+- whether it modifies `pom.xml` or Gradle configuration;
+- how much of the existing project it detects;
+- whether it builds images without a Dockerfile;
+- which infrastructure it creates;
+- whether it infers or binds databases, messaging, storage, and identity;
+- support for local development, CI, preview, cleanup, and repeated deployment;
+- generated-file ownership and synchronization behavior; and
+- public adoption and pain signals.
+
+The product question is not only whether azd can perform more steps. It is
+whether resource composition, identity, configuration mapping, and lifecycle
+management justify asking a Java developer to install and invoke a separate
+CLI.
+
+### Initial findings
+
+Maven and Gradle tooling provides two simultaneous signals:
+
+1. **Requirement validation:** Java developers already use build-tool-native
+   commands to configure, package, and deploy applications.
+2. **Substitution risk:** a separate CLI has an installation and workflow
+   disadvantage when a build plugin already completes the required job.
+
+Examples include:
+
+- the
+  [Azure Container Apps Maven plugin](https://github.com/microsoft/azure-maven-plugins/tree/develop/azure-container-apps-maven-plugin);
+- the
+  [Azure App Service Maven plugin](https://github.com/microsoft/azure-maven-plugins/tree/develop/azure-webapp-maven-plugin),
+  whose `config` goal writes deployment configuration into `pom.xml`;
+- the
+  [Azure App Service Gradle plugin](https://github.com/microsoft/azure-gradle-plugins/tree/master/azure-webapp-gradle-plugin);
+- [Jib](https://github.com/GoogleContainerTools/jib) for daemonless,
+  reproducible Maven and Gradle image builds;
+- Spring Boot
+  [Maven](https://docs.spring.io/spring-boot/maven-plugin/build-image.html) and
+  [Gradle](https://docs.spring.io/spring-boot/gradle-plugin/packaging-oci-image.html)
+  build-image tasks; and
+- [Eclipse JKube](https://eclipse.dev/jkube/) for Java-aware image,
+  Kubernetes, and OpenShift generation and deployment.
+
+These tools establish that Dockerfile-free packaging and one-command
+application deployment are baseline expectations, not sufficient
+differentiation for azd.
+
+The strongest division of responsibility is:
+
+```text
+Maven or Gradle
+    -> compile, test, package, and build an image
+
+azd
+    -> preview and provision the environment
+    -> compose resources, identities, and role assignments
+    -> map Spring configuration
+    -> deploy services and report endpoints
+    -> manage environments and teardown
+```
+
+#### Where azd is weak
+
+- one Spring service deployed to an existing App Service or Container App;
+- application teams that need only a JAR or image upload;
+- Kubernetes teams already standardized on JKube, Helm, and GitOps; and
+- pipelines where Maven or Gradle plus Terraform already has clear ownership.
+
+#### Where azd may be strong
+
+- applications with databases, messaging, storage, secrets, identities, and
+  monitoring;
+- multi-service or polyglot applications with shared resources;
+- repeatable developer and test environments that need preview and teardown;
+- organizations wanting one outer-loop workflow across languages; and
+- source-aware migration from Azure Spring Apps to Container Apps.
+
+The current product hypothesis is therefore:
+
+> Maven and Gradle remain the application build authority. azd becomes the
+> optional application-and-Azure composition authority.
+
+azd should preserve existing wrappers, Jib configuration, buildpacks,
+Dockerfiles, and CI build commands. It should replace a deployment plugin only
+when both tools would otherwise own the same hosting configuration or when the
+application-level resource graph exceeds the plugin's scope.
+
+### Next evidence collection
+
+Tool existence validates the job but does not prove likely azd adoption. The
+first directional census sampled 30 public repositories using:
+
+```text
+topic:spring-boot language:Java pushed:>=2026-03-20
+archived:false fork:false
+```
+
+The sample took the first 10 repositories sorted by most recently updated in
+each star band: 20-99, 100-999, and 1,000 or more. It was collected on
+2026-09-20 and classified as 15 deployable applications, 10 libraries or
+frameworks, and five tutorials.
+
+Within the 15-application subset:
+
+| Signal | Repositories |
+|---|---:|
+| Maven | 9 |
+| Gradle | 6 |
+| Multi-module build | 8 |
+| Dockerfile | 14 |
+| Compose | 13 |
+| GitHub Actions | 13 |
+| Container-image publication from CI | 7 |
+| Kubernetes or Helm configuration | 5 |
+| Terraform, Bicep, or `azure.yaml` | 0 |
+| Azure Maven plugin or Azure deployment workflow | 0 |
+| Cloud or Kubernetes deployment from CI | 0 |
+| At least one database or messaging signal | 15 |
+| More than one database or messaging signal | 8 |
+| Both PostgreSQL and MySQL signals | 5 |
+
+This is directional evidence, not a representative adoption estimate. Topic
+tagging, Java-only filtering, star thresholds, and recent-update sorting bias
+the sample. Two large repository trees were truncated, file inspection was
+limited to 40 relevant files per repository, and dependency matches can come
+from tests, samples, optional modules, or support for alternative databases.
+
+The initial interpretation is:
+
+- Maven and Gradle are firmly the build authority.
+- Existing Dockerfiles and Compose files are common and must be preserved
+  rather than replaced by default.
+- Several projects publish images but do not own environment deployment in the
+  same repository. This is a plausible azd outer-loop integration point.
+- Missing IaC does not prove missing infrastructure. It may be operated
+  manually or owned by another repository or platform team.
+- Dependency-only inference is unsafe. Competing database signals require
+  configuration evidence, module and scope analysis, confidence reporting, and
+  user confirmation.
+- The sample does not establish Azure demand because it found no explicit Azure
+  deployment workflow or Azure build plugin.
+
+### Public Java repositories with `azure.yaml`
+
+An exact GitHub code search on 2026-09-21 for `language: java` in
+`azure.yaml` found 151 files across 138 public repositories. Restricting the
+analysis to the 113 repositories with `azure.yaml` at the repository root
+reduced false positives from generators, test fixtures, and nested examples.
+
+The primary purpose of this census is to establish whether a visible
+**Java + azd user base** already exists. The answer is yes: 113 public
+root-configured Java repositories, including 70 with Spring evidence, show that
+Java applications and azd are already used together. This is a plausible
+adjacent audience for a Spring extension that removes the requirement to first
+author `azure.yaml`.
+
+The root-project cohort contained:
+
+| Signal | Repositories |
+|---|---:|
+| Java `azure.yaml` | 113 |
+| Spring dependency evidence | 70 |
+| Obvious Azure, Microsoft, or Spring sample owners | 14 Spring repositories |
+| Other public owners | 56 Spring repositories |
+| Active other-owner Spring repositories | 43 |
+| Named template metadata | 34 of those 43 |
+| `azd-init@...` metadata | 5 of those 43 |
+| No template metadata | 4 of those 43 |
+| GitHub workflow containing an azd lifecycle command | 11 of those 43 |
+
+Ten of the 11 workflow-enabled repositories retained named template metadata.
+The remaining repository used `azd-init` and then added CI. Public workflow
+files therefore show that generated azd projects can be operationalized, but
+mostly reflect template distribution rather than independently designed azd
+adoption.
+
+Across the 70 root Spring configurations:
+
+- Container Apps appeared in 41, App Service in 17, and Azure Spring Apps in
+  13;
+- 60 declared one Java service and 10 declared multiple Java services;
+- 20 selected custom infrastructure and 21 used hooks; and
+- only three used inline `resources`, so most Azure topology remained in Bicep
+  or template-owned files.
+
+Only 10 Java repositories in the full cohort retained `azd-init@...` metadata;
+five had Spring evidence. They were all single-Java-service projects. One
+generated a PostgreSQL backing resource, while others contained hosting only or
+later added custom Docker, Bicep, hooks, or CI.
+
+This is evidence that Java repositories **can** adopt and retain azd, including
+after `--from-code`. It is not evidence of broad external or production
+adoption: public code excludes private repositories, GitHub ownership does not
+identify customer status, code search is index-dependent, and many repositories
+are demos, workshops, experiments, or copies of published templates.
+
+The product implications are:
+
+- there is an existing public Java + azd user base;
+- that base demonstrates familiarity with azd and makes extension adoption
+  plausible;
+- the extension can also attract similar Spring repositories that have not
+  adopted azd because they lack `azure.yaml`;
+- template creation is the dominant visible Java azd path;
+- `--from-code` has a small but concrete public footprint;
+- existing projects commonly customize build and infrastructure ownership; and
+- Spring-aware import should improve or compose with an existing `azure.yaml`,
+  not assume initialization is always starting from an empty repository.
+
+The census does not measure how many existing users would install the
+extension or how many non-azd Spring repositories it would convert. That
+requires telemetry or an adoption experiment. Template and sample origins
+qualify the strength of the demand signal, but do not erase the demonstrated
+Java + azd footprint.
+
+The public `azd-init` cases illustrate different post-initialization paths:
+
+| Repository | Observed azd shape | Implication |
+|---|---|---|
+| `roryp/matrixagents` | Started from `azd-init`, then added Docker, custom Bicep, hooks, frontend build steps, and model infrastructure. | Initialization is a starting point; later Spring analysis must preserve explicit ownership. |
+| `puspmish3/MortgageCalculator` | Generated a frontend, Spring backend, PostgreSQL resource, and service dependency. | Core can already generate a useful multi-service graph when its evidence matches. |
+| `bbenz/from-commit-to-cloud` | Retained `azd-init` metadata but selected custom infrastructure and added azd CI commands. | Existing custom infrastructure should make extension changes advisory by default. |
+| `voddinenideekshith/GitTasker` | Retained a generated hosting model while the application contains several data-service signals. | An existing `azure.yaml` can be incomplete relative to the current application. |
+| `allxiao/azd-template-play` | Retained a simple generated Container Apps project. | Some repositories need validation and updates rather than new initialization. |
+
+The four active Spring repositories without template metadata were also weak
+evidence of organic production adoption: one was explicitly a reusable shell,
+one was a Spring Petclinic AI sample copy, one was an architecture-oriented
+FinTech demonstration, and one appeared to be an application but had no public
+azd workflow proving deployment. Absence of template metadata is therefore not
+enough to classify a repository as independently authored or operational.
+
+This suggests an additional extension experience:
+
+```text
+existing azure.yaml
+    -> analyze Spring modules and configuration
+    -> compare with declared services, resources, ports, and bindings
+    -> report missing or conflicting configuration
+    -> preserve custom Docker, hooks, and infrastructure ownership
+```
+
+Automatic mutation should be limited to clearly core-generated configuration.
+Custom Bicep, explicit Docker settings, hooks, and existing resource declarations
+should produce a reviewable plan rather than silent replacement.
+
+### Azure-focused directional cohort
+
+A second search deliberately targeted repositories whose metadata mentioned
+Azure and Spring Boot, plus exact `spring-cloud-azure-starter` dependency
+matches. Metadata matches were inspected for Spring build files, Azure SDK or
+Spring Cloud Azure dependencies, Azure deployment plugins and workflows, and
+Azure-specific Terraform, Bicep, or `azure.yaml`.
+
+The metadata cohort contained 49 Spring Boot repositories:
+
+- five were Microsoft or Azure-authored;
+- 14 were explicitly samples, tutorials, learning projects, or proofs of
+  concept;
+- 33 were independent repositories not explicitly classified as samples;
+- 24 of those 33 had zero stars, so the cohort is weak evidence of broad
+  adoption;
+- 16 of the 33 had a concrete Azure integration, deployment, or IaC artifact;
+- 10 used Spring Cloud Azure or an Azure SDK;
+- six used an Azure deployment plugin or workflow;
+- five had Azure-specific Terraform or Bicep;
+- none had `azure.yaml`.
+
+The exact dependency search was dominated by Microsoft implementation and
+sample repositories, but it also found established independent projects:
+
+- [OWASP WrongSecrets](https://github.com/OWASP/wrongsecrets) uses Spring Cloud
+  Azure Key Vault integration and includes Azure Terraform alongside AWS and
+  Google Cloud configurations.
+- [GreenCity](https://github.com/ita-social-projects/GreenCity) uses Spring
+  Cloud Azure identity support and deploys through an existing Helm-oriented
+  project structure.
+- [OHDSI Perseus](https://github.com/OHDSI/Perseus) uses Spring Cloud Azure for
+  identity, Key Vault, Blob Storage, and Redis across multiple modules, while
+  retaining its existing Docker-based service structure.
+- [Hogwarts Artifacts Online](https://github.com/Washingtonwei/hogwarts-artifacts-online)
+  is a Spring sample that uses Key Vault and a direct App Service GitHub
+  Actions workflow.
+
+This provides stronger evidence for **Azure service integration demand** than
+for **azd adoption**. The observed projects already divide responsibilities
+among Maven, Docker, Terraform, Helm, and direct deployment workflows. An azd
+extension would need to:
+
+- discover and preserve those existing authorities;
+- import or compose with existing infrastructure rather than regenerate it;
+- provide clear incremental value for identity, resource binding,
+  environment lifecycle, or migration; and
+- avoid claiming ownership when the repository already has a working
+  deployment path.
+
+The likely greenfield opportunity remains applications that have Azure service
+dependencies but no environment deployment model. For established projects,
+the likely opportunity is an explicit migration or adoption command with a
+previewed ownership boundary.
+
+### Issue-history evidence
+
+An initial issue-history pass reviewed 1,956 issues from Spring Cloud Azure,
+Azure Java SDK Spring issues, and the Azure Maven and Gradle plugins. Keyword
+classification was used only for triage; representative issues were then read
+manually.
+
+The clearest recurring theme is **resource-ownership conflict**, not demand for
+more implicit provisioning:
+
+- A Gradle Functions user provisions the Function App, plan, storage, and
+  Application Insights through Bicep and requests a deployment-only mode that
+  will not recreate them
+  ([microsoft/azure-gradle-plugins#153](https://github.com/microsoft/azure-gradle-plugins/issues/153)).
+- A Maven Functions user similarly states that Bicep owns the Function App,
+  slots, and monitoring, and that Maven should update only the code
+  ([microsoft/azure-maven-plugins#2052](https://github.com/microsoft/azure-maven-plugins/issues/2052)).
+- An early Web Apps plugin issue reports subscription-limit and cleanup
+  failures because each deployment created a new App Service plan rather than
+  reusing an existing plan
+  ([microsoft/azure-maven-plugins#62](https://github.com/microsoft/azure-maven-plugins/issues/62)).
+- One user explicitly asked for Maven to deploy an ARM template, but the answer
+  was that the Maven plugin did not provide that capability
+  ([microsoft/azure-maven-plugins#1539](https://github.com/microsoft/azure-maven-plugins/issues/1539)).
+
+Identity and binding cross the infrastructure/runtime boundary repeatedly:
+
+- Gradle Functions requires a storage connection string even when the Function
+  App and role assignments use managed identity
+  ([microsoft/azure-gradle-plugins#193](https://github.com/microsoft/azure-gradle-plugins/issues/193)).
+- Maven Functions deployment cannot yet use managed identity for its storage
+  operation in some plans
+  ([microsoft/azure-maven-plugins#2550](https://github.com/microsoft/azure-maven-plugins/issues/2550)).
+- Adding Key Vault access to an existing Function App changed its storage
+  configuration and subsequently broke Maven deployment
+  ([microsoft/azure-maven-plugins#1848](https://github.com/microsoft/azure-maven-plugins/issues/1848)).
+- Spring Cloud Azure users encounter runtime failures when a user-assigned
+  identity or its authorization is configured incorrectly
+  ([microsoft/spring-cloud-azure#1060](https://github.com/microsoft/spring-cloud-azure/issues/1060)).
+
+Other issues show gaps in multi-module packaging, deployment slots, blue-green
+deployment, and Service Bus topic/subscription creation. These validate real
+workflow complexity, but each can also be addressed within a build plugin,
+runtime library, or existing IaC system.
+
+The evidence therefore supports:
+
+> There is real outer-loop pain, but public users frequently prefer explicit
+> separation between infrastructure ownership and application deployment.
+
+This is not direct evidence that users want azd. It is evidence that an azd
+extension would need explicit modes:
+
+1. **Generate and provision** a new environment.
+2. **Adopt and connect** existing infrastructure without replacing it.
+3. **Deploy only** while another system remains the infrastructure authority.
+
+Automatic resource creation should be previewed and opt-in when existing
+infrastructure or deployment configuration is detected.
+
+### azd lifecycle ownership tension
+
+azd separates the lifecycle into standalone commands:
+
+```text
+azd provision -> create or update infrastructure
+azd deploy    -> package and deploy application services
+azd up        -> package, provision, publish, and deploy
+```
+
+However, `azd up` is not only a convenience wrapper. The current implementation
+builds one execution graph across package, provision, publish, and deploy. It
+initializes the project's provisioning provider before running either the
+default graph or a custom `workflows.up` definition. When no provider is
+specified, core azd defaults to Bicep.
+
+`azd deploy` is independently executable and does not run the provisioning
+manager. It still requires a configured subscription and enough environment or
+project information to resolve the target resource.
+
+This means the proposed extension modes do not map equally to the current
+command model:
+
+| Ownership mode | Current command fit |
+|---|---|
+| azd generates and owns the environment | `azd up` is the intended experience |
+| azd runs existing Bicep or Terraform | `azd up` fits only if the user transfers provisioning execution to azd |
+| another pipeline owns infrastructure | `azd deploy` fits; `azd up` implies too much ownership |
+| azd only connects existing resources | Requires explicit environment import and binding behavior |
+
+A custom `workflows.up` definition cannot fully express deploy-only ownership
+because `azd up` initializes infrastructure before dispatching that workflow.
+There is also no built-in `infra.provider: none` mode.
+
+The consequence is:
+
+> The extension cannot promise that every adopted Spring application uses
+> `azd up` without either taking infrastructure ownership or requiring a core
+> lifecycle change.
+
+Possible core designs include an explicit skip-provision mode, a no-op
+provisioning provider, or workflow phase selection that occurs before provider
+initialization. Until then, an adopted project should be instructed to use
+`azd deploy` when another system remains the infrastructure authority.
+
+Teardown must follow the same boundary. `azd down` is appropriate only for
+resources azd is authorized to own and delete; an adopted deployment-only
+project must not imply that azd can remove shared or externally managed
+infrastructure.
+
+### Representative workflow comparison
+
+| Scenario | Existing authority | Best azd role | Assessment |
+|---|---|---|---|
+| New Spring service with PostgreSQL and no IaC | None | Generate, provision, bind, and deploy through `azd up` | Strongest fit |
+| Existing Spring service with Bicep or Terraform pipeline | Existing IaC and CI | Adopt bindings and use `azd deploy`, unless provisioning ownership is explicitly transferred | Useful only with strict ownership preservation |
+| One service deploying to an existing App Service | Maven or Gradle plugin | Usually none, or optional deploy-only integration | Build plugin is likely simpler |
+| Multi-service application with shared databases, messaging, identity, and monitoring | Mixed or absent | Compose the environment and coordinate deployment | Strong azd differentiation |
+| Established Helm or GitOps application | Helm, Kubernetes, and platform tooling | Optional environment bootstrap or migration assistance | Replacing the deployment path is weak |
+| Azure Spring Apps migration | Existing platform plus migration tooling | Generate a reviewable target environment and migrate service bindings | Strong transitional use case |
+
+The comparison narrows the likely product:
+
+- `azd up` is the primary greenfield and migration experience.
+- `azd deploy` is the safer entry point for externally provisioned
+  environments.
+- Existing IaC import must not silently become azd ownership.
+- A single-command experience across all modes requires additional core azd
+  lifecycle semantics.
+
+### Cross-ecosystem ownership evidence
+
+The same ownership pressure appears in non-Azure tools. It is not specific to
+Spring or Azure.
+
+#### Jib: intentionally narrow
+
+Jib primarily builds and publishes container images. Its multi-module issue
+history concentrates on classpaths, parallel builds, reproducibility, and
+registry behavior rather than infrastructure import or deletion. This narrow
+boundary makes Jib easy to compose with Terraform, Helm, Kubernetes, or a cloud
+deployment system.
+
+#### Eclipse JKube: pressure begins at manifest ownership
+
+JKube extends further into Kubernetes resource and Helm generation. Users then
+request:
+
+- packaging and publishing an existing Helm chart without asking JKube to
+  generate it
+  ([eclipse-jkube/jkube#865](https://github.com/eclipse-jkube/jkube/issues/865));
+- generating a dependency-only Helm chart without creating Kubernetes
+  resources owned by the Java project
+  ([eclipse-jkube/jkube#2112](https://github.com/eclipse-jkube/jkube/issues/2112));
+  and
+- selectively skipping undeploy for modules whose lifecycle should not be
+  controlled by the current invocation
+  ([eclipse-jkube/jkube#1358](https://github.com/eclipse-jkube/jkube/issues/1358)).
+
+#### AWS Copilot: full environment ownership creates adoption boundaries
+
+AWS Copilot is closer to azd because it owns application and environment
+resources. Its issue history includes requests to:
+
+- combine Copilot-managed services with Terraform, Pulumi, and resources
+  Copilot does not support
+  ([aws/copilot-cli#3243](https://github.com/aws/copilot-cli/issues/3243));
+- run operational commands against services created outside Copilot
+  ([aws/copilot-cli#5528](https://github.com/aws/copilot-cli/issues/5528));
+- import an existing hosted zone and prevent application deletion from
+  deleting it
+  ([aws/copilot-cli#3193](https://github.com/aws/copilot-cli/issues/3193)); and
+- preview every resource that an application deletion will remove
+  ([aws/copilot-cli#5408](https://github.com/aws/copilot-cli/issues/5408)).
+
+#### AWS SAM: convenience resources create cleanup and import problems
+
+AWS SAM users report similar friction:
+
+- retained databases and other persistent resources cannot easily be imported
+  into a recreated stack
+  ([aws/aws-sam-cli#1699](https://github.com/aws/aws-sam-cli/issues/1699));
+- existing resources cannot always be referenced where the underlying
+  CloudFormation ownership model requires creation
+  ([aws/aws-sam-cli#1061](https://github.com/aws/aws-sam-cli/issues/1061)); and
+- automatically created companion stacks simplify first deployment but can
+  leave resources behind after deletion
+  ([aws/aws-sam-cli#2856](https://github.com/aws/aws-sam-cli/issues/2856)).
+
+In the companion-stack discussion, users explicitly describe keeping Terraform
+as the infrastructure authority and using SAM only for the function. This
+closely matches the separation observed in Azure Maven and Gradle plugin
+issues.
+
+The cross-ecosystem result is:
+
+> Full-stack lifecycle convenience is valuable for greenfield applications,
+> but it creates an adoption ceiling when projects already have infrastructure
+> ownership, shared resources, or platform automation.
+
+This validates the extension's need for explicit ownership modes, but still
+does not validate azd demand specifically. The safest detection sequence is:
+
+```text
+detect application and existing deployment authorities
+    -> report evidence
+    -> ask which lifecycle azd may own
+    -> preview generated or adopted state
+    -> provision or deploy only within that boundary
+```
+
+It should not be:
+
+```text
+detect dependency
+    -> assume ownership
+    -> create resource
+```
+
+### Representative repository fit study
+
+The prototype was compared against 10 maintained Spring applications selected
+for variation rather than statistical representation. The default credibility
+threshold was 100 GitHub stars plus recent maintenance. Lower-popularity
+projects were excluded unless they represented a distinct organizational or
+ownership case.
+
+The sample intentionally covers:
+
+- single-module and multi-module applications;
+- Maven and Gradle;
+- no deployment automation, container CI, Helm, and Kubernetes;
+- one database and multiple alternative backing services; and
+- an application with existing Azure Terraform ownership.
+
+Popularity improves confidence that the repositories represent sustained
+projects, but it also biases the sample toward mature applications that already
+have deployment conventions. It therefore tests adoption boundaries better
+than the greenfield opportunity.
+
+The current prototype has a narrower boundary than the proposed product. It
+requires:
+
+- a deployable Maven project at the inspected root;
+- a single root module;
+- the Spring Boot Maven plugin;
+- Spring Boot Actuator; and
+- a PostgreSQL runtime dependency for database provisioning.
+
+Gradle, nested applications, multi-module service discovery, MySQL, Redis,
+messaging, search services, and existing infrastructure adoption are not
+implemented.
+
+| Repository | Public evidence | Current prototype | Hypothetical azd role | Assessment |
+|---|---|---|---|---|
+| [FlyCms](https://github.com/sunkaifei/FlyCms) | Maven application under `backend`; MySQL; no Docker, IaC, or CI deployment detected | Rejected: nested application, no Actuator, and MySQL is unsupported | Generate a new environment while preserving the application build | Strong greenfield shape, but useful generation requires MySQL and likely Solr analysis |
+| [financial-management](https://github.com/LuoDi-Nate/financial-management) | Single-module Maven; MySQL; Docker, Compose, CI, and image publication | Rejected: no Actuator and MySQL is unsupported | Provision an Azure environment around the existing image path | Conditional; azd adds environment lifecycle, but the application already has a complete packaging workflow |
+| [aiworkdeck](https://github.com/zeweihan/aiworkdeck) | Multi-module Maven; Docker and Compose; PostgreSQL and MySQL signals | Rejected: multi-module root | Discover services, ask which database is authoritative, and compose the environment | Promising composition case, but dependency inference alone would make an unsafe database choice |
+| [MateClaw](https://github.com/mateaix/mateclaw) | Multi-module Maven; Docker, Compose, Kubernetes; PostgreSQL, MySQL, and Redis signals | Rejected: multi-module root | Optional Azure environment or migration path that preserves Kubernetes assets | Conditional; potentially valuable resource graph, but Kubernetes already owns deployment |
+| [BookLore](https://github.com/booklore-app/booklore) | Gradle; Docker, Compose, Helm, CI, image publication; MySQL | Rejected: Gradle is unsupported | Adopt existing deployment artifacts or provide an optional Azure environment | Weak; one-service deployment is already well covered |
+| [Grimmory](https://github.com/grimmory-tools/grimmory) | Gradle; Docker, Compose, Helm, CI, image publication; MySQL | Rejected: Gradle is unsupported | Adopt or migrate the existing container and Helm workflow | Weak; replacing the existing path offers little visible incremental value |
+| [Pig](https://github.com/pig-mesh/pig) | Large multi-module Spring Cloud system; Docker and Compose; PostgreSQL, MySQL, and Redis signals | Rejected: multi-module root | Compose shared Azure resources and multiple deployable services | Potentially strong azd differentiation, but discovery and configuration complexity are far beyond the prototype |
+| [metasfresh](https://github.com/metasfresh/metasfresh) | Mature multi-module ERP; image publication; PostgreSQL, Redis, and RabbitMQ signals | Rejected: multi-module root | Optional migration or environment composition with explicit service selection | Weak for automatic adoption; mature operational assumptions and shared services make inference risky |
+| [Conductor](https://github.com/conductor-oss/conductor) | Large Gradle multi-module system; Docker and Compose; several alternative databases, queues, and storage systems | Rejected: Gradle and multi-module layouts are unsupported | Explicit deployment profile selection, not dependency-driven generation | Poor automatic-generation fit; dependencies represent supported alternatives rather than requested infrastructure |
+| [OWASP WrongSecrets](https://github.com/OWASP/wrongsecrets) | Single-module Maven with Actuator; existing Azure, AWS, and Google Cloud Terraform; Azure Kubernetes and Key Vault scenarios | Structurally accepted, but no PostgreSQL resource would be inferred and existing Terraform ownership would be ignored | Connect to or inspect the existing Terraform-managed environment | Not an adoption target because it is educational, but a strong non-disclosure and ownership-preservation test |
+
+The immediate result is:
+
+- only one of the 10 repositories meets the prototype's structural entry
+  requirements;
+- that repository is not a useful automatic-provisioning target because its
+  infrastructure is already explicitly owned by multi-cloud Terraform; and
+- none of the 10 is immediately well served by the prototype without changing
+  the application or ignoring an existing deployment authority.
+
+This does not invalidate the live-tested prototype. It shows that the prototype
+validated the generation and deployment mechanism, not representative project
+compatibility.
+
+The largest applicability gaps are, in order:
+
+1. multi-module and nested-application discovery;
+2. Gradle support;
+3. removal of Actuator as an eligibility requirement;
+4. evidence-backed selection among alternative databases and services; and
+5. ownership-aware reuse of Docker, Helm, Kubernetes, Terraform, and CI.
+
+The hypothetical product appears useful in three of the 10 cases:
+
+- FlyCms as a new-environment flow;
+- aiworkdeck as an application-and-database composition flow; and
+- Pig as a multi-service environment composition flow.
+
+The other cases are conditional or weak because their existing deployment
+authority already solves much of the outer-loop problem. This supports a
+narrower product target:
+
+> Focus first on credible Spring applications with multiple environment
+> dependencies but no established infrastructure authority. Treat mature
+> Docker, Helm, Kubernetes, Terraform, and deployment-plugin projects as
+> adoption or migration scenarios, not automatic generation scenarios.
+
+### Second representative repository cohort
+
+A second cohort tested 10 additional active applications with approximately
+6,600 to 85,000 GitHub stars. It emphasizes popular production-style
+applications and platforms rather than repeating the first cohort's smaller
+and medium-sized projects.
+
+| Repository | Public evidence | Current prototype | Hypothetical azd role | Assessment |
+|---|---|---|---|---|
+| [mall](https://github.com/macrozheng/mall) | Multi-module Maven commerce application; Docker and Compose; MySQL, Redis, MongoDB, RabbitMQ, Elasticsearch, and object-storage signals | Rejected: root is a multi-module aggregator | Provision a selected Azure backing-service profile while retaining existing containers | Potentially valuable composition, but automatic creation from the complete dependency set would substantially over-provision |
+| [Apollo](https://github.com/apolloconfig/apollo) | Multi-module Maven configuration platform; Docker and CI; MySQL, PostgreSQL, and Redis signals | Rejected: multi-module root and no root Actuator dependency | Deploy an explicitly selected supported topology | Weak automatic fit; this is infrastructure software with its own topology and operational model |
+| [eladmin](https://github.com/elunez/eladmin) | Multi-module Maven administration application; MySQL, Redis, and storage signals; no repository deployment authority detected | Rejected: multi-module root without the required root plugin and Actuator declarations | Generate a new environment after identifying the deployable module | Strong candidate if module discovery and MySQL or Redis support exist |
+| [litemall](https://github.com/linlinjava/litemall) | Multi-module Maven commerce application; Docker, Compose, and CI; MySQL | Rejected: multi-module aggregator | Compose the application modules with managed MySQL while preserving containers | Conditional; azd could add environment lifecycle, but an existing Compose path already covers local composition |
+| [newbee-mall](https://github.com/newbee-ltd/newbee-mall) | Single-module Maven application; MySQL and Redis; no Docker, Compose, or CI deployment detected | Rejected: no Actuator, and MySQL is unsupported | Generate hosting, MySQL, Redis, bindings, and deployment | Strongest second-cohort greenfield candidate |
+| [ZFile](https://github.com/zfile-dev/zfile) | Single-module Maven storage application; Docker; MySQL, Redis, and several storage-provider signals | Rejected: no Actuator, and MySQL is unsupported | Deploy the container and connect to an explicitly selected storage provider | Conditional; storage dependencies represent user choices and existing accounts, not permission to create every service |
+| [Komga](https://github.com/gotson/komga) | Gradle media server; Docker and CI; no required external backing service detected | Rejected: Gradle is unsupported | Deploy the existing container | Weak; azd adds little over the established single-container workflow |
+| [JetLinks Community](https://github.com/jetlinks/jetlinks-community) | Large multi-module Maven IoT platform; Docker, Compose, and CI; PostgreSQL, Redis, MongoDB, and Elasticsearch signals | Rejected: multi-module aggregator | Compose an explicit platform deployment profile | Conditional; potentially valuable environment coordination, but unsafe to infer from dependencies and too complex for generic generation |
+| [Apereo CAS](https://github.com/apereo/cas) | Gradle identity platform; Docker, Compose, Kubernetes, and CI; several optional databases, queues, and integrations | Rejected: Gradle is unsupported | Adopt an existing deployment overlay or assist migration | Poor automatic-generation fit; its integrations are configuration choices rather than a single required resource graph |
+| [music-website](https://github.com/Yin-Hongwei/music-website) | Maven server nested beside client and administration applications; Docker, Compose, and CI; MySQL, Redis, and storage signals | Rejected: no deployable project at the repository root | Compose the three application components and managed dependencies | Conditional; meaningful multi-component value exists, but the current repository already defines its container topology |
+
+None of these 10 applications can enter the current prototype flow:
+
+- five have multi-module Maven roots;
+- two use Gradle;
+- one has a nested Maven service rather than a root application; and
+- the two root single-module Maven applications lack Actuator and use MySQL.
+
+The dependency distribution also challenges the prototype's PostgreSQL-first
+scope:
+
+| Signal | Repositories |
+|---|---:|
+| MySQL | 7 |
+| Redis | 8 |
+| PostgreSQL | 3 |
+| MongoDB | 3 |
+| Elasticsearch | 2 |
+| Docker | 8 |
+| Compose | 5 |
+
+These are capability signals, not confirmed deployment requirements. In
+particular, storage providers, databases, and queues are often supported
+alternatives.
+
+Across both cohorts:
+
+- one of 20 repositories meets the prototype's structural eligibility rules;
+- zero of 20 is immediately well served by its current generated resource
+  graph;
+- four repositories are plausible strong targets for a broader greenfield or
+  composition product: FlyCms, aiworkdeck, Pig, and newbee-mall;
+- eladmin is an additional strong candidate once the deployable module is
+  identified; and
+- the remaining projects are conditional, migration-oriented, or poor fits
+  because their topology or deployment authority is already established.
+
+The second cohort reinforces that ownership-aware behavior is necessary but
+not sufficient. Before testing adoption modes deeply, a representative
+implementation needs:
+
+1. Maven and Gradle parity;
+2. nested and multi-module service discovery;
+3. health-check discovery without requiring Actuator;
+4. MySQL and Redis analysis before additional specialized services; and
+5. explicit deployment-profile selection when dependencies represent
+   alternatives.
+
+It does not follow that all five capabilities should be implemented
+immediately. The desk analysis should first be used to narrow the initial
+supported project shape and identify an adoption hypothesis that can be tested
+without claiming general Spring compatibility.
+
+### Concierge trial validation
+
+The next validation should test whether azd creates measurable value for a
+developer who clones a cloud-neutral application and wants a disposable Azure
+deployment. It should not require implementing generic Gradle, multi-module,
+MySQL, Redis, and storage-provider support first.
+
+Use four contrasting applications:
+
+| Application | Validation purpose |
+|---|---|
+| newbee-mall | Simple Maven application with MySQL and Redis but no detected deployment configuration |
+| eladmin | Multi-module application with several dependencies and no detected deployment authority |
+| ZFile | Existing Docker packaging with ambiguous storage-provider choices |
+| Komga | Single-container control case where azd may add little incremental value |
+
+For each fresh clone:
+
+1. Audit the operational contract: build command, artifact, port, health
+   behavior, environment variables, persistence, initialization, and required
+   services.
+2. Record whether each fact came from build files, application configuration,
+   Compose, documentation, or an assumption.
+3. Manually create the `azure.yaml`, Bicep, bindings, and deployment
+   configuration that the hypothetical extension should generate.
+4. Record every material decision that would require a prompt.
+5. Deploy into an isolated resource group and exercise meaningful application
+   behavior.
+6. Restart the application and verify persistent state.
+7. Run `azd down` and verify that it removes all azd-owned resources and
+   nothing external.
+8. Compare the experience with the repository's documented Docker or manual
+   deployment path.
+
+The benchmark should compare:
+
+- commands and material decisions;
+- elapsed time;
+- Azure knowledge required;
+- source changes;
+- unsupported assumptions;
+- resulting functionality; and
+- cleanup completeness.
+
+Success criteria:
+
+- at least three of four applications deploy without source changes;
+- at least 90% of generated settings are supported by explicit repository
+  evidence;
+- no service is provisioned solely because a dependency exists;
+- no more than three material user decisions are required for a trial;
+- persistent data survives an application restart;
+- teardown removes every azd-owned resource and no external resource; and
+- the azd path requires meaningfully less Azure-specific work than the manual
+  baseline.
+
+An independent evaluator should receive only the original repository and the
+generated plan, not the research notes. Successful reproduction would show
+that the plan is understandable without the prototype author's context.
+
+This benchmark can validate technical usefulness after a user chooses azd. It
+cannot establish willingness to discover, install, or adopt azd. That requires
+product telemetry, public behavior, or direct user evidence.
+
+### Remaining evidence
+
+Repository inspection cannot reveal infrastructure owned elsewhere or why a
+team selected its current workflow. The next evidence should therefore focus
+on:
+
+- comparable signals from public support forums;
+- Maven Central usage trends as a supporting signal for Spring Cloud Azure and
+  Azure deployment plugins;
+- task comparisons on representative greenfield, existing-IaC, and
+  multi-service applications; and
+- explicit replacement, complement, and migration rules for each existing
+  workflow shape.
+
+Stars, downloads, and documentation volume should remain supporting signals,
+not adoption proof.
