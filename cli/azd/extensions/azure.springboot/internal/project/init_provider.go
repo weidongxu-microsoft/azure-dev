@@ -47,8 +47,8 @@ func (p *InitProvider) Detect(ctx context.Context, projectPath string) (*azdext.
 	}
 	return &azdext.InitResult{
 		Matched:     true,
-		Name:        detected.Services[0].Name,
-		Description: "Spring Boot application",
+		Name:        detected.Name,
+		Description: "Spring Boot application services",
 		Files:       files,
 	}, nil
 }

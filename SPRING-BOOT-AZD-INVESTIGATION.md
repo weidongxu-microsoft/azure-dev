@@ -33,9 +33,12 @@ Relevant documentation:
 - [Extension SDK reference](https://github.com/Azure/azure-dev/blob/main/cli/azd/docs/extensions/extension-sdk-reference.md)
 - [End-to-end extension walkthrough](https://github.com/Azure/azure-dev/blob/main/cli/azd/docs/extensions/extension-e2e-walkthrough.md)
 
-## Core capability gaps
+## Core capability gaps (upstream baseline)
 
-The zero-configuration experience depends on open azd work:
+The zero-configuration experience depends on open upstream azd work. A custom
+azd build on the prototype branch already wires an installed Spring extension
+into bare `azd up` without `azure.yaml`; these gaps describe upstream support,
+not a limitation of that prototype build.
 
 | Required behavior | Dependency |
 | --- | --- |

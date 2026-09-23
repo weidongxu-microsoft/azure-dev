@@ -1,0 +1,7 @@
+CREATE TABLE IF NOT EXISTS orders (
+    id BIGSERIAL PRIMARY KEY,
+    sku VARCHAR(64) NOT NULL,
+    item_name VARCHAR(128) NOT NULL,
+    quantity INTEGER NOT NULL,
+    total DECIMAL(12, 2) NOT NULL
+);

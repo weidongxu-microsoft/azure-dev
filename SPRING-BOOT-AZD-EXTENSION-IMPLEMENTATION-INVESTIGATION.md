@@ -1,4 +1,4 @@
-# Spring Boot and azd investigation handoff
+# Spring Boot azd extension implementation investigation
 
 ## Objective
 
@@ -19,12 +19,15 @@ The detailed findings are in
 
 ## Current state
 
-- Investigation only; no Spring Boot extension implementation has started.
-- The extension documentation, demo extension, schema, and relevant epic issues
-  were reviewed against `main`.
-- Existing extension APIs cover a vertical slice that starts with an explicit
-  `azure.yaml`.
-- The zero-configuration entry point remains dependent on open azd core issues.
+- A working `azure.springboot` prototype implements extension-driven
+  initialization, Spring/Maven analysis, generated `azure.yaml`, Dockerfiles,
+  Bicep, PostgreSQL and Foundry resources, and multi-service topology.
+- Controlled PostgreSQL, Foundry, and multi-service fixtures have been tested
+  locally and through live Azure deployments using bare `azd up` without
+  `azure.yaml` on the custom prototype azd binary.
+- Existing extension APIs cover the generated-project vertical slice.
+- Upstream integration of the init-provider contract and broader inference
+  coverage remain open implementation concerns.
 
 ## Epic boundaries
 
@@ -98,9 +101,10 @@ directory-detection or external-project translation hook.
    A manually authored `azure.yaml` can select extension-provided framework,
    provisioning, and service-target providers.
 
-2. **The headline experience cannot be implemented only with documented APIs.**
-   There is no current documented entry point that discovers an untouched
-   Spring repository and translates it before an azd project exists.
+2. **The headline experience cannot be implemented only with upstream documented APIs.**
+   The custom prototype azd binary adds pre-project extension startup and
+   init-provider dispatch for bare `azd up`; upstream integration is still
+   required.
 
 3. **Configuration mapping needs its own spike.**
    The environment service stores values, but this does not prove that
@@ -232,12 +236,107 @@ Then investigate configuration and deployment:
 4. Azure/azure-dev#9979
 5. Azure/azure-dev#9968
 
-## Handoff checklist
+## Investigation checklist
 
 - Re-read issue bodies because the extension contracts are actively evolving.
-- Check issue and PR links for implementations merged after this handoff.
+- Check issue and PR links for implementations merged after this investigation.
 - Inspect actual interfaces and protobufs before proposing an architecture.
 - Keep findings in `SPRING-BOOT-AZD-INVESTIGATION.md`.
-- Do not begin broad implementation until provider selection and pre-project
+- Do not broaden implementation until provider selection and pre-project
   detection contracts are understood.
 - Do not create Spring-specific commands as a workaround.
+
+## Related Java runtime proof of concept
+
+Repositories:
+
+- Upstream: https://github.com/JonathanGiles/java-runtime-for-azure
+- Fork branch:
+  https://github.com/saragluna/java-runtime-for-azure/tree/poc/todo-java-mongo-aca
+
+The fork branch is 61 commits ahead of upstream `main` and 0 behind. It changes
+119 files, with approximately 30,029 additions and 84 deletions. The branch
+head is
+[`99adca9`](https://github.com/saragluna/java-runtime-for-azure/commit/99adca9c9049f38929d42d0cc8ff332e1d6344b5)
+from August 9, 2024.
+
+Despite its name, the branch contains no Todo, MongoDB, or Azure Container Apps
+artifacts. It is primarily a proof of concept for running the Java runtime
+locally through Aspire's Developer Control Plane (DCP).
+
+Key changes:
+
+- Adds an `azure-runtime-dcp` Java 21 module that starts DCP, translates
+  application resources into Kubernetes-style containers, executables,
+  services, endpoints, and networks, and manages logs and shutdown.
+- Adds local processing to the core runtime, including template generation,
+  project introspection, and an `aspire-apps.json` manifest.
+- Adds generated Spring Cloud Config Server and Zipkin Server resources.
+- Detects Eureka and Zipkin Maven dependencies and injects corresponding
+  runtime configuration.
+- Updates the Storage Explorer sample to use `DcpAppHost` and Spring Boot
+  build-image support.
+
+Treat this branch as exploratory prior art rather than a reusable implementation.
+It includes generated sources, a bundled macOS ARM64 binary, hard-coded example
+paths, an infinite host loop, duplicate Maven configuration, and no GitHub
+check runs for the branch head.
+
+### Implementation relevance
+
+The upstream repository is an MIT-licensed Java proof of concept based on an
+explicitly authored App Host. It does not analyze an arbitrary Spring
+repository or generate an azd project. Its useful patterns are:
+
+- a deployment-neutral graph of applications, resources, and dependencies;
+- deterministic translation from that graph into an intermediate manifest;
+- dependency-driven supporting resources and runtime configuration; and
+- explicit Spring project, endpoint, and container abstractions.
+
+Relevant upstream areas include:
+
+- `azure-runtime/azure-runtime/src/main/java/com/azure/runtime/host/`
+- `azure-runtime/azure-runtime/src/main/java/com/azure/runtime/resources/`
+- `azure-runtime/extensions/spring/`
+- `azure-runtime/extensions/microservice-common/`
+
+The fork primarily adds local DCP orchestration through
+`azure-runtime/azure-runtime-dcp/`. Its Kubernetes-style containers,
+executables, services, networks, gRPC protocol, and process lifecycle are not
+applicable to the initial azd extension. The generated Eureka, Spring Cloud
+Config, and Zipkin resources are examples of dependency-triggered
+configuration, but should not be ported into the current Azure deployment
+scope.
+
+The existing `azure.springboot` prototype already implements the most relevant
+architectural idea through its deployment-neutral `Analysis`, `Service`,
+`Resource`, `ServiceDependency`, and `Evidence` types. Direct reuse from the
+Java runtime repositories would introduce unrelated Java 21, Kubernetes,
+gRPC, protobuf, and DCP runtime dependencies.
+
+Neither repository solves the extension's main implementation requirements:
+
+- effective Maven and multi-module analysis;
+- deployable-module and executable-artifact selection;
+- Spring properties, YAML, profile, and port resolution;
+- Azure resource and role inference;
+- `azure.yaml`, Dockerfile, and Bicep generation; or
+- integration with the azd init-provider contract.
+
+### Resulting implementation priorities
+
+1. Keep and expand the prototype's deployment-neutral analysis graph.
+2. Replace shallow raw-POM interpretation with effective Maven metadata.
+3. Model packaging, executable artifacts, Java and Spring versions, confidence,
+   conflicts, and structured evidence.
+4. Parse Spring properties and YAML, including profiles and placeholders.
+5. Make Actuator an optional health-check enhancement, not a Spring detection
+   requirement.
+6. Add conservative Service Bus, Storage, Key Vault, and additional database
+   inference.
+7. Add deterministic multi-module tests for deployable modules, artifacts,
+   ports, configuration conflicts, and generated bindings.
+
+Use the Java runtime repositories as design validation for the resource-graph
+approach, not as an implementation dependency or a source for broad code
+transplantation.

@@ -23,6 +23,8 @@ type pomProject struct {
 	Parent       pomParent       `xml:"parent"`
 	ArtifactID   string          `xml:"artifactId"`
 	Version      string          `xml:"version"`
+	Packaging    string          `xml:"packaging"`
+	Modules      []string        `xml:"modules>module"`
 	Properties   pomProperties   `xml:"properties"`
 	Dependencies []pomDependency `xml:"dependencies>dependency"`
 	Build        pomBuild        `xml:"build"`
@@ -55,14 +57,9 @@ type pomPlugin struct {
 // Detect inspects a single-module Maven project without executing build code.
 func Detect(root string) (*Project, error) {
 	pomPath := filepath.Join(root, "pom.xml")
-	data, err := os.ReadFile(pomPath)
+	pom, err := readPom(pomPath)
 	if err != nil {
-		return nil, fmt.Errorf("reading %s: %w", pomPath, err)
-	}
-
-	var pom pomProject
-	if err := xml.Unmarshal(data, &pom); err != nil {
-		return nil, fmt.Errorf("parsing %s: %w", pomPath, err)
+		return nil, err
 	}
 
 	if !isSpringBoot(pom) {
@@ -74,10 +71,16 @@ func Detect(root string) (*Project, error) {
 	if !hasSpringBootPlugin(pom) {
 		return nil, errors.New("pom.xml is missing the spring-boot-maven-plugin")
 	}
-	if !hasDependency(pom, "org.springframework.boot", "spring-boot-starter-actuator") {
-		return nil, errors.New("pom.xml is missing spring-boot-starter-actuator")
+	if pom.Packaging == "pom" {
+		return nil, ErrNotSpringBoot
 	}
-
+	actuator := hasDependency(pom, "org.springframework.boot", "spring-boot-starter-actuator")
+	if !actuator &&
+		!hasDependency(pom, "org.springframework.boot", "spring-boot-starter-web") &&
+		!hasDependency(pom, "org.springframework.boot", "spring-boot-starter-webmvc") &&
+		!hasDependency(pom, "org.springframework.boot", "spring-boot-starter-webflux") {
+		return nil, ErrNotSpringBoot
+	}
 	version := firstNonEmpty(pom.Version, pom.Parent.Version)
 	if version == "" {
 		return nil, errors.New("pom.xml is missing a project version")
@@ -87,7 +90,15 @@ func Detect(root string) (*Project, error) {
 		return nil, fmt.Errorf("artifactId %q cannot be converted to an Azure service name", pom.ArtifactID)
 	}
 
-	port, err := detectPort(filepath.Join(root, "src", "main", "resources", "application.properties"))
+	properties, err := readApplicationConfiguration(root)
+	if err != nil {
+		return nil, err
+	}
+	port, err := detectPort(properties)
+	if err != nil {
+		return nil, err
+	}
+	openAI, err := detectExternalOpenAI(properties)
 	if err != nil {
 		return nil, err
 	}
@@ -98,8 +109,23 @@ func Detect(root string) (*Project, error) {
 		Version:           version,
 		JavaVersion:       strings.TrimSpace(pom.Properties.JavaVersion),
 		Port:              port,
-		ActuatorAvailable: hasDependency(pom, "org.springframework.boot", "spring-boot-starter-actuator"),
+		ActuatorAvailable: actuator,
+		ExternalOpenAI:    openAI,
 	}, nil
+}
+
+func readPom(path string) (pomProject, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return pomProject{}, fmt.Errorf("reading %s: %w", path, err)
+	}
+
+	var pom pomProject
+	if err := xml.Unmarshal(data, &pom); err != nil {
+		return pomProject{}, fmt.Errorf("parsing %s: %w", path, err)
+	}
+
+	return pom, nil
 }
 
 func isSpringBoot(pom pomProject) bool {
@@ -139,30 +165,16 @@ func hasDependency(pom pomProject, groupID string, artifactID string) bool {
 	return false
 }
 
-func detectPort(path string) (int, error) {
-	data, err := os.ReadFile(path)
-	if errors.Is(err, os.ErrNotExist) {
+func detectPort(properties map[string]string) (int, error) {
+	value, found := properties["server.port"]
+	if !found {
 		return defaultPort, nil
 	}
-	if err != nil {
-		return 0, fmt.Errorf("reading %s: %w", path, err)
+	port, err := strconv.Atoi(strings.TrimSpace(value))
+	if err != nil || port < 1 || port > 65535 {
+		return 0, fmt.Errorf("application configuration has invalid server.port %q", strings.TrimSpace(value))
 	}
-
-	for line := range strings.Lines(string(data)) {
-		key, value, found := strings.Cut(strings.TrimSpace(line), "=")
-		if !found || strings.TrimSpace(key) != "server.port" {
-			continue
-		}
-
-		port, err := strconv.Atoi(strings.TrimSpace(value))
-		if err != nil || port < 1 || port > 65535 {
-			return 0, fmt.Errorf("application.properties has invalid server.port %q", strings.TrimSpace(value))
-		}
-
-		return port, nil
-	}
-
-	return defaultPort, nil
+	return port, nil
 }
 
 func serviceName(artifactID string) string {

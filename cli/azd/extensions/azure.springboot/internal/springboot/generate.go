@@ -27,6 +27,8 @@ var (
 	serviceBicepTemplate string
 	//go:embed templates/postgres.bicep
 	postgresBicep string
+	//go:embed templates/foundry.bicep
+	foundryBicep string
 )
 
 // Generate materializes the deterministic azd configuration for a detected
@@ -64,68 +66,83 @@ func GenerateFiles(analysis *Analysis) ([]GeneratedFile, error) {
 	if analysis == nil {
 		return nil, errors.New("analysis is required")
 	}
-	if len(analysis.Services) != 1 {
-		return nil, fmt.Errorf("exactly one analyzed service is required, got %d", len(analysis.Services))
+	if len(analysis.Services) == 0 {
+		return nil, errors.New("at least one analyzed service is required")
 	}
 	if err := validateAnalysis(analysis); err != nil {
 		return nil, err
 	}
 
-	project := &analysis.Services[0]
-	if project.Name == "" {
-		return nil, errors.New("project name is required")
+	if analysis.Name == "" {
+		return nil, errors.New("analysis name is required")
+	}
+	if serviceName(analysis.Name) != analysis.Name {
+		return nil, fmt.Errorf("analysis name %q is not a normalized project name", analysis.Name)
 	}
 
-	if serviceName(project.Name) != project.Name {
-		return nil, fmt.Errorf("project name %q is not a normalized service name", project.Name)
-	}
-
-	replacer := strings.NewReplacer(
-		"{{SERVICE_NAME}}", project.Name,
-		"{{SERVICE_ENV_NAME}}", strings.ToUpper(strings.ReplaceAll(project.Name, "-", "_")),
-		"{{TARGET_PORT}}", fmt.Sprintf("%d", project.Port),
-	)
-	resourceModules, resourceOutputs, serviceParams, secrets, environment, err := generateResourceBindings(
-		analysis,
-		project,
-	)
+	resourceModules, resourceOutputs, err := generateResourceInfrastructure(analysis)
 	if err != nil {
 		return nil, err
 	}
-
 	mainReplacer := strings.NewReplacer(
-		"{{SERVICE_NAME}}", project.Name,
-		"{{SERVICE_ENV_NAME}}", strings.ToUpper(strings.ReplaceAll(project.Name, "-", "_")),
 		"{{RESOURCE_MODULES}}", resourceModules,
 		"{{RESOURCE_OUTPUTS}}", resourceOutputs,
+		"{{SERVICE_IDENTITY_OUTPUTS}}", generateIdentityOutputs(analysis),
 	)
-	serviceReplacer := strings.NewReplacer(
-		"{{SERVICE_NAME}}", project.Name,
-		"{{SERVICE_ENV_NAME}}", strings.ToUpper(strings.ReplaceAll(project.Name, "-", "_")),
-		"{{TARGET_PORT}}", fmt.Sprintf("%d", project.Port),
-		"{{RESOURCE_PARAM_DECLARATIONS}}", serviceParams,
-		"{{SECRETS}}", secrets,
-		"{{ENVIRONMENT_VARIABLES}}", environment,
-	)
-	serviceParameters, err := generateServiceParameters(analysis, project)
-	if err != nil {
-		return nil, err
-	}
 
 	files := []GeneratedFile{
-		{Path: "azure.yaml", Content: []byte(azureYAML(analysis, project))},
-		{Path: "Dockerfile", Content: []byte(replacer.Replace(dockerfileTemplate))},
+		{Path: "azure.yaml", Content: []byte(azureYAML(analysis))},
+		{Path: ".dockerignore", Content: []byte("**/target\n.azure\ninfra\n")},
 		{Path: filepath.Join("infra", "main.bicep"), Content: []byte(mainReplacer.Replace(mainBicepTemplate))},
 		{Path: filepath.Join("infra", "main.parameters.json"), Content: []byte(mainParameters)},
 		{Path: filepath.Join("infra", "resources.bicep"), Content: []byte(resourcesBicep)},
-		{
-			Path:    filepath.Join("infra", project.Name+".bicep"),
-			Content: []byte(serviceReplacer.Replace(serviceBicepTemplate)),
-		},
-		{
-			Path:    filepath.Join("infra", project.Name+".parameters.json"),
-			Content: serviceParameters,
-		},
+	}
+	for i := range analysis.Services {
+		project := &analysis.Services[i]
+		serviceParams, secrets, environment, err := generateServiceBindings(analysis, project)
+		if err != nil {
+			return nil, err
+		}
+		serviceReplacer := strings.NewReplacer(
+			"{{SERVICE_NAME}}", project.Name,
+			"{{SERVICE_ENV_NAME}}", serviceEnvironmentName(project.Name),
+			"{{TARGET_PORT}}", fmt.Sprintf("%d", project.Port),
+			"{{EXTERNAL_INGRESS}}", fmt.Sprintf("%t", project.External),
+			"{{RESOURCE_PARAM_DECLARATIONS}}", serviceParams,
+			"{{SECRETS}}", secrets,
+			"{{ENVIRONMENT_VARIABLES}}", environment,
+			"{{HEALTH_PROBES}}", healthProbes(project),
+		)
+		mavenModule := project.Path
+		artifactDir := "/app"
+		if mavenModule == "" {
+			mavenModule = "."
+		} else {
+			artifactDir += "/" + filepath.ToSlash(mavenModule)
+		}
+		dockerfileReplacer := strings.NewReplacer(
+			"{{MAVEN_MODULE}}", mavenModule,
+			"{{ARTIFACT_DIR}}", artifactDir,
+			"{{TARGET_PORT}}", fmt.Sprintf("%d", project.Port),
+		)
+		serviceParameters, err := generateServiceParameters(analysis, project)
+		if err != nil {
+			return nil, err
+		}
+		files = append(files,
+			GeneratedFile{
+				Path:    filepath.Join(filepath.FromSlash(project.Path), "Dockerfile"),
+				Content: []byte(dockerfileReplacer.Replace(dockerfileTemplate)),
+			},
+			GeneratedFile{
+				Path:    filepath.Join("infra", project.Name+".bicep"),
+				Content: []byte(serviceReplacer.Replace(serviceBicepTemplate)),
+			},
+			GeneratedFile{
+				Path:    filepath.Join("infra", project.Name+".parameters.json"),
+				Content: serviceParameters,
+			},
+		)
 	}
 	if hasResource(analysis, ResourceTypePostgreSQL) {
 		files = append(files, GeneratedFile{
@@ -133,21 +150,52 @@ func GenerateFiles(analysis *Analysis) ([]GeneratedFile, error) {
 			Content: []byte(postgresBicep),
 		})
 	}
+	if hasResource(analysis, ResourceTypeFoundryModel) {
+		files = append(files, GeneratedFile{
+			Path:    filepath.Join("infra", "foundry.bicep"),
+			Content: []byte(foundryBicep),
+		})
+	}
 	return files, nil
 }
 
-func azureYAML(analysis *Analysis, project *Project) string {
-	var uses string
+func azureYAML(analysis *Analysis) string {
+	var services strings.Builder
 	var resources string
-	for _, resource := range analysis.Resources {
-		if !slices.Contains(resource.Consumers, project.Name) {
-			continue
+	for i := range analysis.Services {
+		project := &analysis.Services[i]
+		var uses strings.Builder
+		for _, dependency := range project.Dependencies {
+			fmt.Fprintf(&uses, "      - %s\n", dependency.Service)
 		}
-		uses += fmt.Sprintf("      - %s\n", resource.Name)
-		resources += fmt.Sprintf("  %s:\n    type: %s\n", resource.Name, azureResourceType(resource.Type))
+		for _, resource := range analysis.Resources {
+			if slices.Contains(resource.Consumers, project.Name) {
+				fmt.Fprintf(&uses, "      - %s\n", resource.Name)
+			}
+		}
+		usesBlock := ""
+		if uses.Len() > 0 {
+			usesBlock = "    uses:\n" + uses.String()
+		}
+		projectPath := project.Path
+		dockerContext := ".."
+		if projectPath == "" {
+			projectPath = "."
+			dockerContext = "."
+		}
+		fmt.Fprintf(&services, `  %s:
+    project: %s
+    host: containerapp
+    language: java
+    module: %s
+%s    docker:
+      path: ./Dockerfile
+      context: %s
+      remoteBuild: true
+`, project.Name, projectPath, project.Name, usesBlock, dockerContext)
 	}
-	if uses != "" {
-		uses = "    uses:\n" + uses
+	for _, resource := range analysis.Resources {
+		resources += fmt.Sprintf("  %s:\n    type: %s\n", resource.Name, azureResourceType(resource.Type))
 	}
 	if resources != "" {
 		resources = "resources:\n" + resources
@@ -159,32 +207,14 @@ requiredVersions:
   extensions:
     azure.springboot: ">=0.1.0"
 services:
-  %s:
-    project: .
-    host: containerapp
-    language: java
-    module: %s
-%s    docker:
-      remoteBuild: true
-%s`, project.Name, project.Name, project.Name, uses, resources)
+%s%s`, analysis.Name, services.String(), resources)
 }
 
-func generateResourceBindings(
-	analysis *Analysis,
-	project *Project,
-) (string, string, string, string, string, error) {
+func generateResourceInfrastructure(analysis *Analysis) (string, string, error) {
 	var modules strings.Builder
 	var outputs strings.Builder
-	var params strings.Builder
-	var secrets strings.Builder
-	var environment strings.Builder
-	serviceEnvName := strings.ToUpper(strings.ReplaceAll(project.Name, "-", "_"))
 
 	for _, resource := range analysis.Resources {
-		if !slices.Contains(resource.Consumers, project.Name) {
-			continue
-		}
-
 		switch resource.Type {
 		case ResourceTypePostgreSQL:
 			modules.WriteString(`
@@ -198,23 +228,62 @@ module postgres 'postgres.bicep' = {
   }
 }
 `)
-			fmt.Fprintf(&outputs, `
+			for _, consumer := range resource.Consumers {
+				serviceEnvName := serviceEnvironmentName(consumer)
+				fmt.Fprintf(&outputs, `
 output SERVICE_%s_POSTGRES_JDBC_URL string = postgres.outputs.jdbcUrl
 output SERVICE_%s_POSTGRES_USERNAME string = postgres.outputs.administratorLogin
 output SERVICE_%s_POSTGRES_CREDENTIAL_REFERENCE string = postgres.outputs.credentialReference
 `, serviceEnvName, serviceEnvName, serviceEnvName)
-			params.WriteString(`
+			}
+		case ResourceTypeFoundryModel:
+			modules.WriteString(`
+module foundry 'foundry.bicep' = {
+  name: 'foundry'
+  scope: resourceGroup
+  params: {
+    environmentName: environmentName
+    location: location
+    identityPrincipalId: resources.outputs.managedIdentityPrincipalId
+  }
+}
+`)
+			for _, consumer := range resource.Consumers {
+				serviceEnvName := serviceEnvironmentName(consumer)
+				fmt.Fprintf(&outputs, `
+output SERVICE_%s_FOUNDRY_ENDPOINT string = foundry.outputs.endpoint
+output SERVICE_%s_FOUNDRY_MODEL string = foundry.outputs.modelDeploymentName
+`, serviceEnvName, serviceEnvName)
+			}
+		default:
+			return "", "", fmt.Errorf("unsupported resource type %q", resource.Type)
+		}
+	}
+
+	return modules.String(), outputs.String(), nil
+}
+
+func generateServiceBindings(
+	analysis *Analysis,
+	project *Project,
+) (string, string, string, error) {
+	var params strings.Builder
+	var secrets strings.Builder
+	var environment strings.Builder
+
+	if serviceHasResource(analysis, project.Name, ResourceTypePostgreSQL) {
+		params.WriteString(`
 param postgresJdbcUrl string
 param postgresUsername string
 param postgresPasswordSecretUri string
 `)
-			secrets.WriteString(`        {
+		secrets.WriteString(`        {
           name: 'postgres-password'
           keyVaultUrl: postgresPasswordSecretUri
           identity: identityId
         }
 `)
-			environment.WriteString(`            {
+		environment.WriteString(`            {
               name: 'SPRING_DATASOURCE_URL'
               value: postgresJdbcUrl
             }
@@ -231,12 +300,64 @@ param postgresPasswordSecretUri string
               value: 'always'
             }
 `)
-		default:
-			return "", "", "", "", "", fmt.Errorf("unsupported resource type %q", resource.Type)
+	}
+	if serviceHasResource(analysis, project.Name, ResourceTypeFoundryModel) {
+		params.WriteString(`
+param foundryEndpoint string
+param foundryModel string
+`)
+		environment.WriteString(`            {
+              name: 'AZURE_INFERENCE_ENDPOINT'
+              value: foundryEndpoint
+            }
+            {
+              name: 'AZURE_INFERENCE_MODEL'
+              value: foundryModel
+            }
+`)
+	}
+	if project.ExternalOpenAI != nil {
+		params.WriteString(`
+@minLength(1)
+param azureOpenAiEndpoint string
+@secure()
+@minLength(1)
+param azureOpenAiApiKey string
+`)
+		secrets.WriteString(`        {
+          name: 'azure-openai-api-key'
+          value: azureOpenAiApiKey
+        }
+`)
+		environment.WriteString(`            {
+              name: 'AZURE_OPENAI_ENDPOINT'
+              value: azureOpenAiEndpoint
+            }
+            {
+              name: 'AZURE_OPENAI_API_KEY'
+              secretRef: 'azure-openai-api-key'
+            }
+`)
+		if project.ExternalOpenAI.APIVersion {
+			params.WriteString("@minLength(1)\nparam azureOpenAiApiVersion string\n")
+			environment.WriteString(`            {
+              name: 'AZURE_OPENAI_API_VERSION'
+              value: azureOpenAiApiVersion
+            }
+`)
 		}
 	}
+	for _, dependency := range project.Dependencies {
+		paramName := serviceURLParameterName(dependency.Service)
+		fmt.Fprintf(&params, "\nparam %s string\n", paramName)
+		fmt.Fprintf(&environment, `            {
+              name: '%s'
+              value: %s
+            }
+`, dependency.EnvironmentVariable, paramName)
+	}
 
-	return modules.String(), outputs.String(), params.String(), secrets.String(), environment.String(), nil
+	return params.String(), secrets.String(), environment.String(), nil
 }
 
 func generateServiceParameters(analysis *Analysis, project *Project) ([]byte, error) {
@@ -256,6 +377,9 @@ func generateServiceParameters(analysis *Analysis, project *Project) ([]byte, er
 		"identityId": map[string]string{
 			"value": fmt.Sprintf("${SERVICE_%s_IDENTITY_ID}", serviceEnvName),
 		},
+		"identityClientId": map[string]string{
+			"value": fmt.Sprintf("${SERVICE_%s_IDENTITY_CLIENT_ID}", serviceEnvName),
+		},
 	}
 
 	if serviceHasResource(analysis, project.Name, ResourceTypePostgreSQL) {
@@ -269,6 +393,30 @@ func generateServiceParameters(analysis *Analysis, project *Project) ([]byte, er
 			"value": fmt.Sprintf("${SERVICE_%s_POSTGRES_CREDENTIAL_REFERENCE}", serviceEnvName),
 		}
 	}
+	if serviceHasResource(analysis, project.Name, ResourceTypeFoundryModel) {
+		parameters["foundryEndpoint"] = map[string]string{
+			"value": fmt.Sprintf("${SERVICE_%s_FOUNDRY_ENDPOINT}", serviceEnvName),
+		}
+		parameters["foundryModel"] = map[string]string{
+			"value": fmt.Sprintf("${SERVICE_%s_FOUNDRY_MODEL}", serviceEnvName),
+		}
+	}
+	if project.ExternalOpenAI != nil {
+		parameters["azureOpenAiEndpoint"] = map[string]string{"value": "${AZURE_OPENAI_ENDPOINT}"}
+		parameters["azureOpenAiApiKey"] = map[string]string{"value": "${AZURE_OPENAI_API_KEY}"}
+		if project.ExternalOpenAI.APIVersion {
+			version := "${AZURE_OPENAI_API_VERSION}"
+			if project.ExternalOpenAI.APIVersionDefault != "" {
+				version = fmt.Sprintf("${AZURE_OPENAI_API_VERSION:-%s}", project.ExternalOpenAI.APIVersionDefault)
+			}
+			parameters["azureOpenAiApiVersion"] = map[string]string{"value": version}
+		}
+	}
+	for _, dependency := range project.Dependencies {
+		parameters[serviceURLParameterName(dependency.Service)] = map[string]string{
+			"value": fmt.Sprintf("${SERVICE_%s_URL}", serviceEnvironmentName(dependency.Service)),
+		}
+	}
 
 	document := map[string]any{
 		"$schema":        "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
@@ -280,6 +428,63 @@ func generateServiceParameters(analysis *Analysis, project *Project) ([]byte, er
 		return nil, fmt.Errorf("encoding service parameters: %w", err)
 	}
 	return append(content, '\n'), nil
+}
+
+func generateIdentityOutputs(analysis *Analysis) string {
+	var outputs strings.Builder
+	for _, service := range analysis.Services {
+		serviceEnvName := serviceEnvironmentName(service.Name)
+		fmt.Fprintf(&outputs, "output SERVICE_%s_IDENTITY_ID string = resources.outputs.managedIdentityId\n",
+			serviceEnvName)
+		fmt.Fprintf(&outputs,
+			"output SERVICE_%s_IDENTITY_CLIENT_ID string = resources.outputs.managedIdentityClientId\n",
+			serviceEnvName)
+	}
+	return outputs.String()
+}
+
+func serviceEnvironmentName(service string) string {
+	return strings.ToUpper(strings.ReplaceAll(service, "-", "_"))
+}
+
+func healthProbes(project *Project) string {
+	if !project.ActuatorAvailable {
+		return ""
+	}
+	return fmt.Sprintf(`          probes: [
+            {
+              type: 'Liveness'
+              httpGet: {
+                path: '/actuator/health/liveness'
+                port: %d
+                scheme: 'HTTP'
+              }
+            }
+            {
+              type: 'Readiness'
+              httpGet: {
+                path: '/actuator/health/readiness'
+                port: %d
+                scheme: 'HTTP'
+              }
+            }
+          ]
+`, project.Port, project.Port)
+}
+
+func serviceURLParameterName(service string) string {
+	parts := strings.Split(service, "-")
+	var name strings.Builder
+	name.WriteString(parts[0])
+	for _, part := range parts[1:] {
+		if part == "" {
+			continue
+		}
+		name.WriteString(strings.ToUpper(part[:1]))
+		name.WriteString(part[1:])
+	}
+	name.WriteString("Url")
+	return name.String()
 }
 
 func hasResource(analysis *Analysis, resourceType ResourceType) bool {
@@ -300,10 +505,31 @@ func validateAnalysis(analysis *Analysis) error {
 		if service.Name == "" {
 			return errors.New("analyzed service name is required")
 		}
+		if serviceName(service.Name) != service.Name {
+			return fmt.Errorf("service name %q is not normalized", service.Name)
+		}
 		if _, exists := services[service.Name]; exists {
 			return fmt.Errorf("duplicate analyzed service %q", service.Name)
 		}
 		services[service.Name] = struct{}{}
+	}
+	for _, service := range analysis.Services {
+		for _, dependency := range service.Dependencies {
+			if _, exists := services[dependency.Service]; !exists {
+				return fmt.Errorf("service %q references unknown service %q", service.Name, dependency.Service)
+			}
+			if dependency.Service == service.Name {
+				return fmt.Errorf("service %q cannot depend on itself", service.Name)
+			}
+			if dependency.EnvironmentVariable == "" {
+				return fmt.Errorf("service %q dependency %q has no environment variable", service.Name,
+					dependency.Service)
+			}
+			if len(dependency.Evidence) == 0 {
+				return fmt.Errorf("service %q dependency %q has no supporting evidence", service.Name,
+					dependency.Service)
+			}
+		}
 	}
 
 	resources := make(map[string]struct{}, len(analysis.Resources))
@@ -334,6 +560,8 @@ func azureResourceType(resourceType ResourceType) string {
 	switch resourceType {
 	case ResourceTypePostgreSQL:
 		return "db.postgres"
+	case ResourceTypeFoundryModel:
+		return "ai.openai.model"
 	default:
 		return string(resourceType)
 	}

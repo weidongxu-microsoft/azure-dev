@@ -1,0 +1,6 @@
+# A simple nested mapping; application.properties overrides the endpoint and key.
+azure:
+  openai:
+    endpoint: ${AZURE_OPENAI_ENDPOINT}
+    api-key: ${AZURE_OPENAI_API_KEY}
+    api-version: ${AZURE_OPENAI_API_VERSION}

@@ -4,6 +4,7 @@ param containerRegistryName string
 param containerAppsEnvironmentName string
 param imageName string
 param identityId string
+param identityClientId string
 {{RESOURCE_PARAM_DECLARATIONS}}
 
 resource containerRegistry 'Microsoft.ContainerRegistry/registries@2023-07-01' existing = {
@@ -31,7 +32,7 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
     managedEnvironmentId: containerAppsEnvironment.id
     configuration: {
       ingress: {
-        external: true
+        external: {{EXTERNAL_INGRESS}}
         targetPort: {{TARGET_PORT}}
         transport: 'auto'
       }
@@ -54,33 +55,20 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
           name: 'main'
           image: imageName
           env: [
+            {
+              name: 'AZURE_CLIENT_ID'
+              value: identityClientId
+            }
 {{ENVIRONMENT_VARIABLES}}          ]
           resources: {
             cpu: json('0.5')
             memory: '1Gi'
           }
-          probes: [
-            {
-              type: 'Liveness'
-              httpGet: {
-                path: '/actuator/health/liveness'
-                port: {{TARGET_PORT}}
-                scheme: 'HTTP'
-              }
-            }
-            {
-              type: 'Readiness'
-              httpGet: {
-                path: '/actuator/health/readiness'
-                port: {{TARGET_PORT}}
-                scheme: 'HTTP'
-              }
-            }
-          ]
+{{HEALTH_PROBES}}
         }
       ]
     }
   }
 }
 
-output SERVICE_URL string = 'https://${app.properties.configuration.ingress.fqdn}'
+output SERVICE_{{SERVICE_ENV_NAME}}_URL string = 'https://${app.properties.configuration.ingress.fqdn}'

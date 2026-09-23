@@ -1074,6 +1074,110 @@ Automatic mutation should be limited to clearly core-generated configuration.
 Custom Bicep, explicit Docker settings, hooks, and existing resource declarations
 should produce a reviewable plan rather than silent replacement.
 
+#### Popular repository compatibility cases
+
+Use a **blind reconstruction test** rather than modifying these repositories'
+existing azd configuration. In a disposable copy, hide `azure.yaml`,
+`infra/`, and deployment-only Dockerfiles/hooks; retain application and
+frontend source and build metadata. Give the implementer only a general
+Spring/Azure capability requirement, not the candidate's azd files or this
+assessment. Generate a new azd project from the application, then compare it
+with the original configuration as the reference answer. Assess functional
+parity (services, builds, resources, configuration, endpoint behavior, and
+cleanup), not byte-for-byte YAML/Bicep equivalence. Where code cannot establish
+resource ownership or credentials, require an explicit input rather than
+guessing. Use the azd binary built from the prototype branch, which wires
+bare `azd up` to the init provider when `azure.yaml` is absent. The released
+azd binary does not include that prototype integration.
+
+Three of the highest-starred non-Microsoft Spring repositories in the census
+are initial candidates:
+
+| Repository | Application shape | Prototype result |
+|---|---|---|
+| `roryp/matrixagents` | One Spring Boot backend, React build hook, WebSocket endpoints, custom Azure OpenAI settings, YAML configuration, and custom Bicep | Outside current scope. Basic YAML is parsed, but the frontend hook and custom AI bindings would be lost. |
+| `SandraAhlgrimm/ai-nutrition-planner` | Three Spring Boot modules using different AI frameworks, Buildpack hooks, custom images, scripts, and Bicep | Outside current scope as a complete project. Module topology is discoverable, but build ownership and provider-specific configuration are explicit project choices. |
+| `roryp/sora` | Conventional single-module Spring Boot application with Actuator, port 8080, Dockerfile, and Azure OpenAI environment bindings | Bare prototype `azd up` deployed the generated Container App after fixing the root-module Dockerfile path. Home and health endpoints returned 200; video was not tested with a valid key. |
+
+These cases separate application facts from deployment choices.
+
+Reasonably deducible from conventional Maven and Spring configuration:
+
+- deployable Maven modules, artifact-derived service names, and Java versions;
+- explicit application ports and Actuator health endpoints;
+- conventional executable-JAR packaging;
+- recognized database dependencies; and
+- environment-variable references in Spring configuration.
+
+Not safe to infer without confirmation or existing project metadata:
+
+- API key versus managed identity authentication;
+- Azure OpenAI resource, deployment, model, and API-version selection;
+- custom Dockerfile, Buildpack, hook, and frontend packaging ownership;
+- custom Bicep resources and role assignments;
+- public versus internal ingress when it is only an infrastructure choice; and
+- whether existing `azure.yaml` and infrastructure should be merged or
+  preserved unchanged.
+
+The original compatibility gaps were:
+
+1. Parse `application.yml` in addition to properties files (basic nested
+   mapping now implemented).
+2. Inventory generic `${ENV_VAR}` bindings without assuming a resource type
+   (only the direct Azure OpenAI contract is now covered).
+3. Make Actuator optional for Spring Boot recognition (now implemented for
+   web applications).
+4. Reconstruct custom build steps where application source supplies evidence;
+   do not assume an existing Dockerfile or azd hook will be available.
+5. Report uncertainty instead of inventing resource ownership or credentials.
+6. Treat Azure OpenAI as an external dependency unless resource ownership and
+   authentication are explicit (now implemented for endpoint/API-key clients).
+
+Start with `roryp/sora`: a single-module test of Spring Azure OpenAI
+configuration and its required runtime bindings. Keep its repository and
+reference configuration hidden from the implementer until the generic feature
+is complete. Then test `matrixagents` for YAML/Actuator/frontend coupling and
+`ai-nutrition-planner` for multi-service, Buildpack, and framework-specific
+configuration. Record inferred facts, missing inputs, deployment results, and
+differences from the reference for each case.
+
+**First blind result (`roryp/sora`):** The implementer received only a generic
+Spring Boot + external Azure OpenAI requirement, without the candidate
+repository or its azd files. The requirement did name representative
+`azure.openai.*` property and `AZURE_OPENAI_*` environment conventions, so
+this tests implementation against an unseen repository, **not** discovery of
+unknown property naming conventions. In an application-only copy of commit
+`e78775e`, the resulting analyzer identified one Spring service on port 8080 with Actuator
+and external OpenAI configuration; it generated one Container App, secure key
+binding, endpoint binding, and a defaultable API-version binding. It did not
+invent an Azure OpenAI resource, matching the reference's external-resource
+choice. Generated main/service Bicep compiled and the application packaged
+with Maven. A detected discrepancy (the Spring API-version default was
+initially treated as required) was corrected using azd's optional substitution
+syntax. No Azure deployment or API request was performed, so runtime parity is
+**not yet established**. Supplied endpoint/key values are still required, and
+the current init provider cannot check them before the first infrastructure
+phase. The reference's non-root Java 17 image and Container App sizing/scale
+are not reconstructed; those are deployment-policy differences, not proven
+functional blockers. The candidate was checked through the analyzer and
+generator before the live trial below.
+
+**Live bare-`up` result (`roryp/sora`, September 23, 2026):** From an
+application-only copy with no `azure.yaml`, the custom azd binary invoked the
+installed extension and generated the project. On the corporate subscription
+in West US 3, `azd up` created `rg-sora-ext-live-0923`, Container Registry,
+Log Analytics, and a Container Apps environment. The first remote image build
+failed because the generated root-module Dockerfile tried to copy
+`/app/./target/*.jar` even though Maven produced `/app/target/*.jar`. After
+fixing the generator and rebuilding the extension, a retry deployed the
+Container App. Its home page and Actuator health/readiness endpoints returned
+HTTP 200, and the deployed app had endpoint, API-version, and secret-backed
+API-key bindings. The test used a deliberately nonfunctional key because the
+available Foundry account disables key authentication; **video generation was
+not validated**. The extension did not provision an AI resource. This trial
+checks the bare-`up` experience, not parity with the repository's former azd
+configuration.
+
 ### Azure-focused directional cohort
 
 A second search deliberately targeted repositories whose metadata mentioned

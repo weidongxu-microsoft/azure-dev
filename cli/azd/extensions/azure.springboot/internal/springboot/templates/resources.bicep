@@ -72,4 +72,5 @@ output containerRegistryEndpoint string = containerRegistry.properties.loginServ
 output containerRegistryName string = containerRegistry.name
 output containerAppsEnvironmentName string = containerAppsEnvironment.name
 output managedIdentityId string = managedIdentity.id
+output managedIdentityClientId string = managedIdentity.properties.clientId
 output managedIdentityPrincipalId string = managedIdentity.properties.principalId
