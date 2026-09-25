@@ -29,6 +29,12 @@ Azure deployment. It may bind an existing Azure resource selected by the
 developer into an azd project, but it does not reverse-engineer deployed
 resources into application code.
 
+The [database addition design discussion](./SPRING-BOOT-AZD-ADD-DATABASE-DESIGN.md)
+examines a different proposed experience: `azd add` changing an existing
+Spring project's dependencies and configuration without generating
+`azure.yaml`. That experience is not covered by the current prototype or the
+existing issue boundaries.
+
 Beyond existing-application inspection and deployment, the major components
 are:
 
