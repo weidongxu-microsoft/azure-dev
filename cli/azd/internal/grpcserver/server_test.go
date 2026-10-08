@@ -12,6 +12,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"slices"
@@ -108,8 +109,17 @@ func TestServer_AllBetaAdaptersDispatchToStable(t *testing.T) {
 					ServerStreams: true,
 				}, fullMethod)
 				require.NoError(t, err)
-				require.NoError(t, stream.SendMsg(request))
+
+				if err := stream.SendMsg(request); err != nil {
+					// this can happen if the 'receiver' of this request doesn't read
+					// from the 'request' stream and just returns immediately. It's not an issue for us
+					// since that's not what we're testing.
+					require.ErrorIs(t, err, io.EOF)
+				}
+
 				require.NoError(t, stream.CloseSend())
+
+				// RecvMsg observes the remote endpoint's authoritative terminal RPC status.
 				require.Equal(t, codes.Unimplemented, status.Code(stream.RecvMsg(response)))
 			})
 		}
@@ -182,6 +192,7 @@ func Test_Server_Start(t *testing.T) {
 		echoValidationService{},
 		newTelemetryService(stubExtensionLookup{extension: reportingExtension}),
 		v1beta.UnimplementedInitServiceServer{},
+		v1beta.UnimplementedCommandResultServiceServer{},
 	)
 
 	serverInfo, err := server.Start()
@@ -220,7 +231,7 @@ func Test_Server_Start(t *testing.T) {
 		}
 
 		services := server.grpcServer.GetServiceInfo()
-		require.Len(t, services, 3*len(serviceNames)+6)
+		require.Len(t, services, 3*len(serviceNames)+7)
 		for _, serviceName := range serviceNames {
 			require.Contains(t, services, "azd.extensions.v1."+serviceName)
 			require.Contains(t, services, "azd.extensions.v1beta."+serviceName)
@@ -230,6 +241,16 @@ func Test_Server_Start(t *testing.T) {
 			require.NotContains(t, services, "azd.extensions.v1."+serviceName)
 			require.Contains(t, services, "azd.extensions.v1beta."+serviceName)
 			require.Contains(t, services, "azdext."+serviceName)
+		}
+		require.NotContains(t, services, "azd.extensions.v1.CommandResultService")
+		require.Contains(t, services, "azd.extensions.v1beta.CommandResultService")
+		require.NotContains(t, services, "azdext.CommandResultService")
+		for _, serviceName := range []string{
+			"azd.extensions.v1.FollowUpService",
+			"azd.extensions.v1beta.FollowUpService",
+			"azdext.FollowUpService",
+		} {
+			require.NotContains(t, services, serviceName)
 		}
 	})
 
@@ -479,6 +500,7 @@ func Test_Server_StreamInterceptor(t *testing.T) {
 		azdext.UnimplementedValidationServiceServer{},
 		v1beta.UnimplementedTelemetryServiceServer{},
 		v1beta.UnimplementedInitServiceServer{},
+		v1beta.UnimplementedCommandResultServiceServer{},
 	)
 
 	serverInfo, err := server.Start()
@@ -609,6 +631,7 @@ func TestServer_RelaysExtensionErrorOverGRPC(t *testing.T) {
 		azdext.UnimplementedValidationServiceServer{},
 		newTelemetryService(stubExtensionLookup{}),
 		v1beta.UnimplementedInitServiceServer{},
+		v1beta.UnimplementedCommandResultServiceServer{},
 	)
 	serverInfo, err := server.Start()
 	require.NoError(t, err)
@@ -960,6 +983,7 @@ func newTestServer(
 		azdext.UnimplementedValidationServiceServer{},
 		v1beta.UnimplementedTelemetryServiceServer{},
 		v1beta.UnimplementedInitServiceServer{},
+		v1beta.UnimplementedCommandResultServiceServer{},
 	).WithOptions(options...)
 }
 
@@ -1679,9 +1703,27 @@ func TestValidateAuthToken_InvalidToken(t *testing.T) {
 
 func TestNewServer(t *testing.T) {
 	t.Parallel()
-	s := NewServer(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	s := NewServer(
+		nil, nil, nil, nil, nil, nil, nil, nil, nil, nil,
+		nil, nil, nil, nil, nil, nil, nil, nil, nil, nil,
+	)
 	require.NotNil(t, s)
 	assert.Nil(t, s.grpcServer, "grpcServer should be nil before Start")
+}
+
+func TestNewServerRegistersBetaEventOverride(t *testing.T) {
+	events, _ := createTestEventService()
+	server := NewServer(
+		nil, nil, nil, nil, nil, events, nil, nil, nil, nil,
+		nil, nil, nil, nil, nil, nil, nil, nil, nil, nil,
+	)
+	override, ok := server.betaServiceOverrides[BetaEventService].(*betaEventService)
+	require.True(t, ok)
+	require.Same(t, events, override.service)
+
+	replacement := &betaEventService{}
+	server.WithOptions(WithBetaServiceOverride(BetaEventService, replacement))
+	require.Same(t, replacement, server.betaServiceOverrides[BetaEventService])
 }
 
 func TestServerInfo(t *testing.T) {

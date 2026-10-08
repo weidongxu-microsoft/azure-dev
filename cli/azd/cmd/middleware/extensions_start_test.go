@@ -43,6 +43,7 @@ func newExtensionsMiddlewareTestServer() *grpcserver.Server {
 		azdext.UnimplementedValidationServiceServer{},
 		contracts.UnimplementedTelemetryServiceServer{},
 		contracts.UnimplementedInitServiceServer{},
+		contracts.UnimplementedCommandResultServiceServer{},
 	)
 }
 
