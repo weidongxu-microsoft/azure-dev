@@ -5,6 +5,7 @@ package springboot
 
 import (
 	"context"
+	"encoding/xml"
 	"errors"
 	"fmt"
 	"os"
@@ -13,6 +14,8 @@ import (
 	"strings"
 
 	"github.com/azure/azure-dev/cli/azd/internal/appdetect"
+	"github.com/azure/azure-dev/cli/azd/pkg/exec"
+	"github.com/azure/azure-dev/cli/azd/pkg/tools/maven"
 )
 
 // Analyze inspects the application and returns a deployment-neutral model of
@@ -55,18 +58,24 @@ func Analyze(ctx context.Context, root string) (*Analysis, error) {
 		analysis.Services = append(analysis.Services, *service)
 
 		if slices.Contains(projects[i].DatabaseDeps, appdetect.DbPostgres) {
-			analysis.Resources = append(analysis.Resources, ResourceRequirement{
-				Name:      "postgres",
-				Type:      ResourceTypePostgreSQL,
-				Consumers: []string{service.Name},
-				Evidence: []Evidence{
-					{
-						Type:   "dependency",
-						Source: sourcePath(service.Path, "pom.xml"),
-						Value:  "PostgreSQL runtime dependency in the effective Maven model",
+			runtimePostgres, err := detectRuntimePostgres(ctx, root, projects[i].Path)
+			if err != nil {
+				return nil, err
+			}
+			if runtimePostgres {
+				analysis.Resources = append(analysis.Resources, ResourceRequirement{
+					Name:      "postgres",
+					Type:      ResourceTypePostgreSQL,
+					Consumers: []string{service.Name},
+					Evidence: []Evidence{
+						{
+							Type:   "dependency",
+							Source: sourcePath(service.Path, "pom.xml"),
+							Value:  "PostgreSQL runtime dependency in the effective Maven model",
+						},
 					},
-				},
-			})
+				})
+			}
 		}
 
 		foundryEvidence, err := detectFoundryModels(projects[i].Path)
@@ -97,6 +106,34 @@ func Analyze(ctx context.Context, root string) (*Analysis, error) {
 	}
 
 	return analysis, nil
+}
+
+func detectRuntimePostgres(ctx context.Context, root, projectPath string) (bool, error) {
+	cli := maven.NewCli(exec.NewCommandRunner(nil))
+	cli.SetPath(projectPath, root)
+	effectivePom, err := cli.EffectivePom(ctx, filepath.Join(projectPath, "pom.xml"))
+	if err != nil {
+		return false, fmt.Errorf("resolving PostgreSQL dependency scopes: %w", err)
+	}
+	var pom pomProject
+	if err := xml.Unmarshal([]byte(effectivePom), &pom); err != nil {
+		return false, fmt.Errorf("parsing effective Maven dependencies: %w", err)
+	}
+	return hasRuntimePostgres(pom.Dependencies), nil
+}
+
+func hasRuntimePostgres(dependencies []pomDependency) bool {
+	for _, dependency := range dependencies {
+		if dependency.Scope != "" && dependency.Scope != "compile" && dependency.Scope != "runtime" {
+			continue
+		}
+		if (dependency.GroupID == "org.postgresql" && dependency.ArtifactID == "postgresql") ||
+			(dependency.GroupID == "com.azure.spring" &&
+				dependency.ArtifactID == "spring-cloud-azure-starter-jdbc-postgresql") {
+			return true
+		}
+	}
+	return false
 }
 
 func detectServiceDependencies(root string, analysis *Analysis) error {

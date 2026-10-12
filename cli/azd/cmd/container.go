@@ -37,7 +37,6 @@ import (
 	"github.com/azure/azure-dev/cli/azd/pkg/azapi"
 	"github.com/azure/azure-dev/cli/azd/pkg/azd"
 	"github.com/azure/azure-dev/cli/azd/pkg/azdext"
-	v1beta "github.com/azure/azure-dev/cli/azd/pkg/azdext/contracts/v1beta"
 	"github.com/azure/azure-dev/cli/azd/pkg/azsdk"
 	"github.com/azure/azure-dev/cli/azd/pkg/azsdk/storage"
 	"github.com/azure/azure-dev/cli/azd/pkg/cloud"
@@ -632,9 +631,8 @@ func registerCommonDependencies(container *ioc.NestedContainer) {
 		features *alpha.FeatureManager,
 		lazyEnvManager *lazy.Lazy[environment.Manager],
 		transport policy.Transporter,
-		initService *grpcserver.InitService,
 	) *repository.Initializer {
-		initializer := repository.NewInitializerWithRepositoryStatusChecker(
+		return repository.NewInitializerWithRepositoryStatusChecker(
 			console,
 			gitCli,
 			dotnetCli,
@@ -642,29 +640,6 @@ func registerCommonDependencies(container *ioc.NestedContainer) {
 			lazyEnvManager,
 			repository.NewGitHubRepositoryStatusChecker(transport),
 		)
-		initializer.SetInitProvider(func(
-			ctx context.Context,
-			projectPath string,
-		) (*repository.InitProject, error) {
-			detected, provider, err := initService.Detect(ctx, projectPath)
-			if err != nil || detected == nil {
-				return nil, err
-			}
-			files := make([]repository.InitFile, 0, len(detected.GetFiles()))
-			for _, file := range detected.GetFiles() {
-				files = append(files, repository.InitFile{
-					Path:    file.GetPath(),
-					Content: file.GetContent(),
-				})
-			}
-			return &repository.InitProject{
-				Name:        detected.GetName(),
-				Description: detected.GetDescription(),
-				Files:       files,
-				Provider:    provider,
-			}, nil
-		})
-		return initializer
 	})
 	container.MustRegisterSingleton(alpha.NewFeaturesManager)
 	container.MustRegisterSingleton(config.NewUserConfigManager)
@@ -1061,10 +1036,6 @@ func registerCommonDependencies(container *ioc.NestedContainer) {
 	container.MustRegisterSingleton(grpcserver.NewAiModelService)
 	container.MustRegisterScoped(grpcserver.NewCopilotService)
 	container.MustRegisterSingleton(grpcserver.NewTelemetryService)
-	container.MustRegisterSingleton(grpcserver.NewInitService)
-	container.MustRegisterSingleton(func(service *grpcserver.InitService) v1beta.InitServiceServer {
-		return service
-	})
 
 	// Required for nested actions called from composite actions like 'up'
 	registerAction[*cmd.ProvisionAction](container, "azd-provision-action")

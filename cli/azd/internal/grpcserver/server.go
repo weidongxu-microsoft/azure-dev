@@ -50,7 +50,6 @@ type Server struct {
 	provisioningService  azdext.ProvisioningServiceServer
 	validationService    azdext.ValidationServiceServer
 	telemetryService     v1beta.TelemetryServiceServer
-	initService          v1beta.InitServiceServer
 	betaServiceOverrides map[BetaService]any
 }
 
@@ -73,7 +72,6 @@ func NewServer(
 	provisioningService azdext.ProvisioningServiceServer,
 	validationService azdext.ValidationServiceServer,
 	telemetryService v1beta.TelemetryServiceServer,
-	initService v1beta.InitServiceServer,
 	commandResultService v1beta.CommandResultServiceServer,
 ) *Server {
 	server := &Server{
@@ -96,7 +94,6 @@ func NewServer(
 		provisioningService:  provisioningService,
 		validationService:    validationService,
 		telemetryService:     telemetryService,
-		initService:          initService,
 		betaServiceOverrides: map[BetaService]any{},
 	}
 	if principalService, ok := accountService.(BetaAccountServiceGetCurrentPrincipalOverride); ok {

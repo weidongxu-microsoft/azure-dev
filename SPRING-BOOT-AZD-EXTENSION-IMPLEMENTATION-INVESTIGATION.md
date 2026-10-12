@@ -1,5 +1,11 @@
 # Spring Boot azd extension implementation investigation
 
+> October prototype update: use `azd spring init` to generate local project
+> files, then standard `azd up`. Bare-`up` dispatch has been removed.
+> The original target and integration constraints below are historical;
+> [current usage](./cli/azd/extensions/azure.springboot/README.md) follows the
+> narrower explicit-init milestone.
+
 ## Objective
 
 Continue investigating

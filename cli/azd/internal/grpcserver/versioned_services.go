@@ -134,7 +134,6 @@ func (s *Server) registerServices() error {
 			BetaProvisioningService:  s.provisioningService,
 			BetaValidationService:    s.validationService,
 			BetaTelemetryService:     s.telemetryService,
-			BetaInitService:          s.initService,
 		},
 		betaServiceOverrides,
 	)

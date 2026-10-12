@@ -4,6 +4,7 @@
 package springboot
 
 import (
+	"context"
 	_ "embed"
 	"encoding/json"
 	"errors"
@@ -12,6 +13,8 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+
+	"github.com/azure/azure-dev/cli/azd/pkg/project"
 )
 
 var (
@@ -33,31 +36,56 @@ var (
 
 // Generate materializes the deterministic azd configuration for a detected
 // Spring Boot application. Existing azd files are never overwritten.
-func Generate(root string, analysis *Analysis) error {
+func Generate(root string, analysis *Analysis) (resultErr error) {
 	files, err := GenerateFiles(analysis)
 	if err != nil {
 		return err
 	}
 
+	directory, err := os.OpenRoot(root)
+	if err != nil {
+		return fmt.Errorf("opening project directory: %w", err)
+	}
+	defer directory.Close()
+
 	for _, file := range files {
 		path := filepath.Join(root, file.Path)
-		if _, err := os.Stat(path); err == nil {
+		if _, err := directory.Lstat(file.Path); err == nil {
 			return fmt.Errorf("refusing to overwrite existing %s", path)
 		} else if !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("checking %s: %w", path, err)
 		}
 	}
 
+	var created []string
+	defer func() {
+		if resultErr != nil {
+			for _, path := range created {
+				if err := directory.Remove(path); err != nil {
+					resultErr = errors.Join(resultErr, fmt.Errorf("removing generated %s: %w", path, err))
+				}
+			}
+		}
+	}()
 	for _, file := range files {
 		path := filepath.Join(root, file.Path)
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		if err := directory.MkdirAll(filepath.Dir(file.Path), 0o755); err != nil {
 			return fmt.Errorf("creating parent directory for %s: %w", path, err)
 		}
-		if err := os.WriteFile(path, file.Content, 0o600); err != nil {
+		target, err := directory.OpenFile(file.Path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+		if err != nil {
+			return fmt.Errorf("creating %s: %w", path, err)
+		}
+		created = append(created, file.Path)
+		_, writeErr := target.Write(file.Content)
+		if err := errors.Join(writeErr, target.Close()); err != nil {
 			return fmt.Errorf("writing %s: %w", path, err)
 		}
 	}
 
+	if _, err := project.Load(context.Background(), filepath.Join(root, "azure.yaml")); err != nil {
+		return fmt.Errorf("validating generated azure.yaml: %w", err)
+	}
 	return nil
 }
 
@@ -92,7 +120,7 @@ func GenerateFiles(analysis *Analysis) ([]GeneratedFile, error) {
 
 	files := []GeneratedFile{
 		{Path: "azure.yaml", Content: []byte(azureYAML(analysis))},
-		{Path: ".dockerignore", Content: []byte("**/target\n.azure\ninfra\n")},
+		{Path: ".dockerignore", Content: []byte("**/target\n.azure\ninfra\n.git\n.env\n.env.*\n")},
 		{Path: filepath.Join("infra", "main.bicep"), Content: []byte(mainReplacer.Replace(mainBicepTemplate))},
 		{Path: filepath.Join("infra", "main.parameters.json"), Content: []byte(mainParameters)},
 		{Path: filepath.Join("infra", "resources.bicep"), Content: []byte(resourcesBicep)},
@@ -203,9 +231,9 @@ func azureYAML(analysis *Analysis) string {
 
 	return fmt.Sprintf(`# yaml-language-server: $schema=https://raw.githubusercontent.com/Azure/azure-dev/main/schemas/v1.0/azure.yaml.json
 name: %s
-requiredVersions:
-  extensions:
-    azure.springboot: ">=0.1.0"
+infra:
+  provider: bicep
+  path: infra
 services:
 %s%s`, analysis.Name, services.String(), resources)
 }

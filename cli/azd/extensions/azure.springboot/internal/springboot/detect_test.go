@@ -61,6 +61,23 @@ func TestAnalyzeSpringTodo(t *testing.T) {
 	}, analysis.Resources)
 }
 
+func TestRuntimePostgresScopes(t *testing.T) {
+	for _, library := range []pomDependency{
+		{GroupID: "org.postgresql", ArtifactID: "postgresql"},
+		{GroupID: "com.azure.spring", ArtifactID: "spring-cloud-azure-starter-jdbc-postgresql"},
+	} {
+		for _, scope := range []string{"", "compile", "runtime", "test", "provided", "system", "import"} {
+			t.Run(library.ArtifactID+"/"+scope, func(t *testing.T) {
+				dependency := library
+				dependency.Scope = scope
+				want := scope == "" || scope == "compile" || scope == "runtime"
+				require.Equal(t, want, hasRuntimePostgres([]pomDependency{dependency}))
+			})
+		}
+	}
+	require.False(t, hasRuntimePostgres([]pomDependency{{GroupID: "com.h2database", ArtifactID: "h2"}}))
+}
+
 func TestAnalyzeSpringOrdersMicroservices(t *testing.T) {
 	analysis, err := Analyze(t.Context(), microservicesFixturePath(t))
 
@@ -276,7 +293,8 @@ func TestGenerateProject(t *testing.T) {
 
 	azureYAML, err := os.ReadFile(filepath.Join(root, "azure.yaml"))
 	require.NoError(t, err)
-	require.Contains(t, string(azureYAML), "azure.springboot: \">=0.1.0\"")
+	require.NotContains(t, string(azureYAML), "requiredVersions:")
+	require.Contains(t, string(azureYAML), "provider: bicep")
 	require.Contains(t, string(azureYAML), "language: java")
 	require.Contains(t, string(azureYAML), "remoteBuild: true")
 	require.Contains(t, string(azureYAML), "uses:\n      - postgres")
@@ -341,6 +359,22 @@ func TestGenerateProjectWithoutInferredResources(t *testing.T) {
 		generatedContent(files, filepath.Join("infra", "spring-todo.bicep")),
 		"SPRING_DATASOURCE_URL",
 	)
+}
+
+func TestGenerateConfinesWritesToProject(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(root, "infra")); err != nil {
+		t.Skipf("symlinks are unavailable: %v", err)
+	}
+	analysis := &Analysis{
+		Name: "app", Services: []Project{{Name: "app", Port: 8080, External: true}},
+	}
+	require.Error(t, Generate(root, analysis))
+	require.NoFileExists(t, filepath.Join(root, "azure.yaml"))
+	entries, err := os.ReadDir(outside)
+	require.NoError(t, err)
+	require.Empty(t, entries)
 }
 
 func TestGenerateSpringOrdersMicroservices(t *testing.T) {

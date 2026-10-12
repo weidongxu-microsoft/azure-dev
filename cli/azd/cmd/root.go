@@ -273,7 +273,7 @@ func newRootCmd(
 		GroupingOptions: actions.CommandGroupOptions{
 			RootLevelHelp: actions.CmdGroupStart,
 		},
-	}).UseMiddleware("extensions", middleware.NewExtensionsMiddleware)
+	})
 
 	root.
 		Add("restore", &actions.ActionDescriptorOptions{
@@ -409,8 +409,8 @@ func newRootCmd(
 			},
 			RequireLogin: true,
 		}).
-		UseMiddleware("extensions", middleware.NewExtensionsMiddleware).
-		UseMiddleware("hooks", middleware.NewHooksMiddleware)
+		UseMiddleware("hooks", middleware.NewHooksMiddleware).
+		UseMiddleware("extensions", middleware.NewExtensionsMiddleware)
 
 	root.Add("monitor", &actions.ActionDescriptorOptions{
 		Command:        newMonitorCmd(),

@@ -1,5 +1,13 @@
 # Spring Boot extension prototype assessment
 
+## Current entry point
+
+The October prototype now uses `azd spring init` to preview and generate
+`azure.yaml`, Dockerfiles, and Bicep, followed by standard `azd up`.
+Automatic bare-`up` initialization has been removed. Earlier results and epic
+requirements below describe the previous experiment, not the current entry
+point. See the [extension README](./cli/azd/extensions/azure.springboot/README.md).
+
 ## Full epic scope
 
 [The Spring Boot epic](https://github.com/Azure/azure-dev/issues/9960) is

@@ -191,7 +191,6 @@ func Test_Server_Start(t *testing.T) {
 		azdext.UnimplementedProvisioningServiceServer{},
 		echoValidationService{},
 		newTelemetryService(stubExtensionLookup{extension: reportingExtension}),
-		v1beta.UnimplementedInitServiceServer{},
 		v1beta.UnimplementedCommandResultServiceServer{},
 	)
 
@@ -499,7 +498,6 @@ func Test_Server_StreamInterceptor(t *testing.T) {
 		azdext.UnimplementedProvisioningServiceServer{},
 		azdext.UnimplementedValidationServiceServer{},
 		v1beta.UnimplementedTelemetryServiceServer{},
-		v1beta.UnimplementedInitServiceServer{},
 		v1beta.UnimplementedCommandResultServiceServer{},
 	)
 
@@ -630,7 +628,6 @@ func TestServer_RelaysExtensionErrorOverGRPC(t *testing.T) {
 		azdext.UnimplementedProvisioningServiceServer{},
 		azdext.UnimplementedValidationServiceServer{},
 		newTelemetryService(stubExtensionLookup{}),
-		v1beta.UnimplementedInitServiceServer{},
 		v1beta.UnimplementedCommandResultServiceServer{},
 	)
 	serverInfo, err := server.Start()
@@ -982,7 +979,6 @@ func newTestServer(
 		azdext.UnimplementedProvisioningServiceServer{},
 		azdext.UnimplementedValidationServiceServer{},
 		v1beta.UnimplementedTelemetryServiceServer{},
-		v1beta.UnimplementedInitServiceServer{},
 		v1beta.UnimplementedCommandResultServiceServer{},
 	).WithOptions(options...)
 }
@@ -1705,7 +1701,7 @@ func TestNewServer(t *testing.T) {
 	t.Parallel()
 	s := NewServer(
 		nil, nil, nil, nil, nil, nil, nil, nil, nil, nil,
-		nil, nil, nil, nil, nil, nil, nil, nil, nil, nil,
+		nil, nil, nil, nil, nil, nil, nil, nil, nil,
 	)
 	require.NotNil(t, s)
 	assert.Nil(t, s.grpcServer, "grpcServer should be nil before Start")
@@ -1715,7 +1711,7 @@ func TestNewServerRegistersBetaEventOverride(t *testing.T) {
 	events, _ := createTestEventService()
 	server := NewServer(
 		nil, nil, nil, nil, nil, events, nil, nil, nil, nil,
-		nil, nil, nil, nil, nil, nil, nil, nil, nil, nil,
+		nil, nil, nil, nil, nil, nil, nil, nil, nil,
 	)
 	override, ok := server.betaServiceOverrides[BetaEventService].(*betaEventService)
 	require.True(t, ok)

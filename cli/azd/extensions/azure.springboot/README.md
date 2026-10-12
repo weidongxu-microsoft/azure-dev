@@ -3,11 +3,31 @@
 This prototype targets:
 
 ```text
-existing Spring Boot repository -> azd up -> Azure Container Apps
+existing Spring Boot repository -> azd spring init -> azd up -> Azure Container Apps
 ```
 
-The application repository does not need an `azure.yaml`, Dockerfile, or
-infrastructure files.
+Start with an application-only repository, then run:
+
+```bash
+azd spring init
+# Review and accept the proposed services, resources, and files.
+azd up
+# Standard azd provisioning and deployment.
+```
+
+`spring init` writes `azure.yaml`, Bicep under `infra/`, Dockerfiles, and
+`.dockerignore`. It does not provision resources, deploy, or create an azd
+environment. Select the environment and supply required inputs before
+provisioning. Generated projects do not require the Spring extension to deploy.
+
+For automation, use `azd spring init --yes --no-prompt`. `--yes` accepts the
+generation plan; `--no-prompt` without it fails. Existing files are never
+overwritten, and failed generation removes files created by that attempt.
+Re-running init is not a merge or synchronization operation.
+
+The extension no longer registers an automatic init provider or intercepts
+bare `azd up`. Future standard `azd init` integration can reuse the analyzer
+and generator.
 
 ## Analysis and generation
 
@@ -28,6 +48,10 @@ current hosting policy. Other resources are conditional:
 | Spring AI OpenAI starter, Azure Identity, and `AZURE_INFERENCE_*` configuration | Microsoft Foundry resource, model deployment, managed identity access, inference environment variables, and `ai.openai.model` metadata |
 | `azure.openai.endpoint` and `azure.openai.api-key` properties referencing `AZURE_OPENAI_ENDPOINT` and `AZURE_OPENAI_API_KEY` | External Azure OpenAI endpoint and secure Container App API-key secret; no inferred Azure OpenAI resource or model |
 | A service URL property referencing another detected service | Deployment ordering, internal ingress for the dependency, and the configured service URL environment variable |
+
+The preview lists resources the prototype will provision. A PostgreSQL
+dependency is not proof of ownership: this prototype retains its earlier
+provisioning policy, not a general provision-versus-reuse resolver.
 
 If PostgreSQL is not present in the analysis, none of its Bicep, parameters,
 secrets, environment variables, or `azure.yaml` entries are generated.
@@ -62,6 +86,10 @@ an internal catalog service, and a public orders service using PostgreSQL. It
 validates that libraries remain build dependencies without becoming deployment
 units.
 
+`TestSpringInitExistingCases` exercises explicit init on all four checked-in
+fixtures, checking generated services/resources, unchanged application files,
+and repeat-init overwrite protection.
+
 ## Current boundaries
 
 - Root or multi-module Maven projects with explicit Spring Boot service modules.
@@ -72,3 +100,7 @@ units.
 - Service dependencies require an explicit `*_SERVICE_URL` property contract.
 - Gradle, profile resolution, and existing-resource selection remain future
   work.
+- Existing Dockerfiles and `.dockerignore` files are protected rather than
+  adopted; container-build reuse remains future work.
+- Passwordless PostgreSQL bindings are not supported: generated PostgreSQL
+  disables Entra authentication and uses an administrator password.

@@ -79,6 +79,12 @@ Current maturity status of Azure Developer CLI features. See [Feature Stages](..
 | Deployment Stacks | Alpha |
 | Extensions | Alpha |
 
+## Branch Prototypes
+
+| Feature | Stage |
+|---|---|
+| [Spring Boot explicit initialization](../../cli/azd/extensions/azure.springboot/README.md) (`spring init`) | Prototype; not released |
+
 ---
 
 For the full feature tracking table, see [cli/azd/docs/feature-stages.md](../../cli/azd/docs/feature-stages.md).

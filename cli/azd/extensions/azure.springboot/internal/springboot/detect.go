@@ -43,6 +43,7 @@ type pomProperties struct {
 type pomDependency struct {
 	GroupID    string `xml:"groupId"`
 	ArtifactID string `xml:"artifactId"`
+	Scope      string `xml:"scope"`
 }
 
 type pomBuild struct {
