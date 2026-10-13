@@ -1,12 +1,36 @@
 # Spring Boot extension prototype assessment
 
-## Current entry point
+## Current implementation status (October 13, 2026)
 
 The October prototype now uses `azd spring init` to preview and generate
 `azure.yaml`, Dockerfiles, and Bicep, followed by standard `azd up`.
 Automatic bare-`up` initialization has been removed. Earlier results and epic
 requirements below describe the previous experiment, not the current entry
 point. See the [extension README](./cli/azd/extensions/azure.springboot/README.md).
+
+The [implementation handoff](./SPRING-BOOT-AZD-EXTENSION-IMPLEMENTATION-INVESTIGATION.md)
+is the starting point for real implementation. There are no remaining
+prototype core changes. YAML generation now reuses main's public project
+types/writer; Bicep remains extension-owned after a core-generation parity
+experiment exposed binding, secret-reference, ingress, and probe differences.
+
+The latest seven-case matrix passed init on stock azd, Bicep compilation, and
+Maven packaging, with source/secret preservation and overwrite checks. This
+is local generation/build coverage, not a new cloud/runtime validation.
+Earlier live tests proved password-based PostgreSQL persistence, Foundry
+managed-identity tool calling, and orders-to-catalog communication. Sora's
+live UI/health checks did not validate video generation.
+
+Passwordless PostgreSQL remains incomplete: analysis does not retain its auth
+setting, and generation always enables password auth and disables Entra auth.
+The intended fix is managed-identity binding plus non-admin database-role/grant
+bootstrap through a generated `postprovision` script. The script is not
+implemented. Petclinic's default H2 and PostgreSQL-profile variants are
+proposed acceptance cases, not completed tests.
+
+The remaining sections preserve historical epic analysis and experiment
+results. In particular, init-provider lifecycle and core-owned writes below
+describe the removed experiment, not the current extension's exclusive writer.
 
 ## Full epic scope
 
@@ -86,7 +110,7 @@ Spring Apps migration.
 
 ## Existing-application flow: critical path
 
-This section covers the flow prototyped in this branch. The other epic tracks
+This section covers the earlier automatic-init experiment. The other epic tracks
 have separate implementation paths and risks that this prototype did not
 investigate.
 
@@ -182,9 +206,10 @@ investigate.
   [#9978](https://github.com/Azure/azure-dev/issues/9978),
   [#9979](https://github.com/Azure/azure-dev/issues/9979), and
   [#9968](https://github.com/Azure/azure-dev/issues/9968).
-- **Relational database binding:** azd lacks a standard post-provision
-  data-plane phase for creating least-privilege managed-identity database
-  principals and grants. Partly tracked by
+- **Relational database binding:** the prototype does not create
+  least-privilege managed-identity database principals and grants. A generated
+  script invoked by the existing `postprovision` hook can perform that SQL
+  data-plane work; a new core lifecycle phase is not required. Partly tracked by
   [#9964](https://github.com/Azure/azure-dev/issues/9964),
   [#9967](https://github.com/Azure/azure-dev/issues/9967), and
   [#9968](https://github.com/Azure/azure-dev/issues/9968); no issue directly

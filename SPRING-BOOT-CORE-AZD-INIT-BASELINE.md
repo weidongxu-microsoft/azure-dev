@@ -1,9 +1,15 @@
 # Spring Boot core azd initialization baseline
 
+> Updated October 13, 2026. Recorded baseline experiments are not a promise
+> about every current core version. The Spring prototype now uses explicit
+> `azd spring init`, followed by stock azd deployment; the custom init-provider
+> plumbing and core dependency-scope changes have been removed.
+> See the [implementation handoff](./SPRING-BOOT-AZD-EXTENSION-IMPLEMENTATION-INVESTIGATION.md).
+
 ## Purpose
 
 Establish what core azd already supports for an existing Java application
-before evaluating a Spring-specific init-provider extension.
+before evaluating a Spring-specific initialization extension.
 
 The key product question is:
 
@@ -18,13 +24,28 @@ Core `azd init --from-code`:
 - detects Maven projects using the effective POM;
 - detects leaf modules under multi-module Maven roots;
 - treats supported Maven leaf projects as Java services;
-- detects MySQL, PostgreSQL, Redis, and MongoDB runtime dependencies;
-- excludes test, provided, system, and import-scoped dependencies;
-- generates Java services for Azure Container Apps; and
-- gives init-provider extensions the first opportunity to handle the project.
+- detects selected MySQL, PostgreSQL, Redis, and MongoDB dependencies;
+- generates Java services for Azure Container Apps.
 
 It does not support Gradle and is not Spring-specific. A Maven leaf module can
-be treated as deployable even when it is a library.
+be treated as deployable even when it is a library. The merged-main detector
+used by this branch does not filter database dependency scopes; the Spring
+extension separately rechecks PostgreSQL candidates against compile/runtime
+scopes in the effective POM.
+
+## Generation reuse result
+
+The extension now constructs main's public `project.ProjectConfig` and calls
+`project.Save` for `azure.yaml`; safe project writes remain extension-owned.
+Core `infra generate` was exercised separately, but its current resource
+schema/templates do not preserve the prototype's complete Spring bindings,
+custom ACA secret references, internal ingress, and Actuator probes. Its
+PostgreSQL firewall also permits all IP addresses. The prototype therefore
+retains its embedded Bicep templates.
+
+This introduces no new core changes. The prototype still compiles inside the
+core Go module and imports `internal/appdetect`; an independently versioned
+implementation must resolve that coupling and pin public module dependencies.
 
 ## Spring Todo experiment
 

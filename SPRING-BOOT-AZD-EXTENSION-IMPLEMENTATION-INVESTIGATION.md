@@ -1,12 +1,81 @@
 # Spring Boot azd extension implementation investigation
 
-> October prototype update: use `azd spring init` to generate local project
-> files, then standard `azd up`. Bare-`up` dispatch has been removed.
-> The original target and integration constraints below are historical;
-> [current usage](./cli/azd/extensions/azure.springboot/README.md) follows the
-> narrower explicit-init milestone.
+## Implementation handoff (October 13, 2026)
 
-## Objective
+This branch preserves prototype code, research, test evidence, and lessons
+learned. Real implementation will start from a clean branch; this is a knowledge
+archive, not a product-ready baseline.
+
+The first implementation milestone is:
+
+```text
+existing Spring Boot repository -> azd spring init -> review generated files -> standard azd up
+```
+
+Start with an application-only repository. Init inspects a trusted Maven
+project, previews services/resources/files, and generates `azure.yaml`,
+Dockerfiles, `.dockerignore`, and `infra/`. It does not create an environment,
+provision, deploy, or modify application source. Automation requires
+`--yes --no-prompt`; existing files are never overwritten.
+
+The branch is `springboot-init-provider-prototype`; its name is historical.
+The prototype core init-provider changes have been removed. Stock azd
+deployment works without the Spring extension after generation. Automatic
+bare-`up` initialization, standard-init discovery, and micro-template/layer
+integration are not prerequisites for this milestone.
+
+### What is implemented
+
+| Surface | Current implementation |
+| --- | --- |
+| Entry point | Extension custom command `azd spring init`; no lifecycle interception |
+| Analysis | Maven/Spring service inspection, PostgreSQL runtime-scope filtering, explicit Foundry/OpenAI bindings, and service relationships |
+| `azure.yaml` | Main's public `project.ProjectConfig` and `project.Save`, staged before exclusive project writes |
+| Bicep | Extension-owned embedded templates; core `infra generate` cannot preserve all current bindings, secret references, ingress, or probes |
+| Packaging/deployment | Generated Dockerfiles and ordinary azd Java/Container Apps lifecycle |
+| Identity | User-assigned identity for ACR, Key Vault secret references, and passwordless Foundry calls |
+
+See the [extension README](./cli/azd/extensions/azure.springboot/README.md)
+for the seven-case test matrix, command behavior, and current limitations.
+All seven cases passed stock-azd init, Bicep compilation, and Maven packaging.
+The serializer replacement preserved all 56 infrastructure/container files.
+Earlier live PostgreSQL, Foundry, and multi-service trials used the previous
+entry point; the latest explicit-init regression did not deploy to Azure.
+
+### Remaining implementation work
+
+1. Package an independently versioned extension and pin its published azd
+   module dependency. Resolve the prototype's `internal/appdetect` coupling;
+   a public serializer does not make every core package a supported SDK API.
+2. Define a bounded provisioning/connection policy with explicit inputs.
+   A driver is dependency evidence, not ownership or active-profile evidence.
+   Do not infer firewall, VNet, or private-endpoint policy from Spring source.
+3. Complete PostgreSQL managed-identity binding. Carry authentication intent
+   into analysis, enable Entra authentication, and bind the correct database
+   username. For a non-admin app role, generate an idempotent `postprovision`
+   SQL bootstrap script with explicit administrator access and connectivity.
+   This script is not implemented. Making the app an Entra administrator is
+   simpler but is not equivalent to least-privilege access.
+4. Harden effective configuration, Java-version-aware packaging, optional
+   probes, and existing Dockerfile adoption. Generated Dockerfiles currently
+   use Java 21; re-running init is not a merge/sync operation.
+5. Add [Spring Petclinic](https://github.com/spring-projects/spring-petclinic)
+   as a proposed real-app acceptance case: default H2 must not provision a
+   database; the selected PostgreSQL profile must generate working bindings.
+   Petclinic has not been tested. Revalidate the explicit-init flow live,
+   including passwordless SQL access, repeated provisioning, and cleanup.
+
+Managed identity remains the intended Azure authentication approach; the
+current PostgreSQL password-only template is a missing service integration,
+not a reason to reject managed identity as the product direction.
+
+## Historical investigation
+
+The sections below record the original zero-file/bare-`up` investigation.
+Their command restrictions, custom core contracts, and issue ordering do not
+define the explicit-init milestone above.
+
+### Original objective
 
 Continue investigating
 [Azure/azure-dev#9960](https://github.com/Azure/azure-dev/issues/9960), which
@@ -23,7 +92,7 @@ Spring-specific azd commands.
 The detailed findings are in
 [`SPRING-BOOT-AZD-INVESTIGATION.md`](./SPRING-BOOT-AZD-INVESTIGATION.md).
 
-## Current state
+## Historical prototype state
 
 - A working `azure.springboot` prototype implements extension-driven
   initialization, Spring/Maven analysis, generated `azure.yaml`, Dockerfiles,

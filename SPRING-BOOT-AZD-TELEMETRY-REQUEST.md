@@ -1,5 +1,11 @@
 # Spring Boot azd extension telemetry request
 
+> October 13, 2026 scope: the proposed first milestone is
+> `azd spring init` -> generated project -> ordinary `azd up`.
+> This remains a request for aggregate evidence, not collected results or
+> a request to add telemetry fields. See the
+> [implementation handoff](./SPRING-BOOT-AZD-EXTENSION-IMPLEMENTATION-INVESTIGATION.md).
+
 ## Goal
 
 Determine whether a meaningful group of Spring Boot developers would use an
@@ -35,9 +41,10 @@ then generate a Container Apps-oriented azd project.
 
 This is already close to the proposed extension's primary goal: start from an
 existing application without `azure.yaml`, infer a deployment model, and make
-`azd up` possible. The extension should therefore be evaluated as a
-Spring-aware improvement to this workflow, not as a separate initialization
-experience.
+`azd up` possible. The explicit `spring init` milestone must demonstrate
+Spring-aware improvements over this baseline; a new command alone is not
+incremental value. Existing `--from-code` usage is a proxy for that audience,
+not a measurement of the unreleased Spring command.
 
 `init.method=project` should not be treated as an independent user-selected
 workflow. It can be recorded when existing-application scanning finds no

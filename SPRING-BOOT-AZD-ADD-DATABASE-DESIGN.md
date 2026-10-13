@@ -4,12 +4,37 @@ This note records the proposed experience discussed for
 [#9960](https://github.com/Azure/azure-dev/issues/9960). It is a design
 direction, **not** implemented behavior or an agreed extension contract.
 
-## Direction and ownership
+## Current direction (October 13, 2026)
+
+The first milestone is explicit `azd spring init`, which generates
+`azure.yaml` and infrastructure, followed by standard `azd up`. It does not
+edit the application's POM, Spring configuration, business logic, or schema.
+The earlier no-`azure.yaml`/`azd add` proposal below is future design research,
+not a prerequisite for this milestone.
+
+Managed identity is the intended Azure authentication approach. The prototype
+already uses it for Foundry, ACR pulls, and Key Vault secret access, but its
+PostgreSQL server/binding still uses an administrator password and disables
+Entra authentication. The before/after PostgreSQL cases pass generation and
+packaging; they do not prove a passwordless connection or chat persistence.
+
+For a non-admin PostgreSQL app identity, Bicep enables Entra authentication and
+configures an Entra administrator; SQL creates the identity-mapped database role
+and grants its permissions. A generated, idempotent `postprovision` script is
+the proposed bridge, requiring administrator access and network connectivity.
+Neither this script nor passwordless PostgreSQL support is implemented.
+[Bicep can instead configure a service principal as Entra administrator](https://learn.microsoft.com/en-us/azure/templates/microsoft.dbforpostgresql/2024-08-01/flexibleservers/administrators),
+but giving the app administrator privileges is not least-privilege access.
+
+See the [implementation handoff](./SPRING-BOOT-AZD-EXTENSION-IMPLEMENTATION-INVESTIGATION.md)
+and [current tests](./cli/azd/extensions/azure.springboot/README.md).
+
+## Historical direction and ownership
 
 - Start with an existing Spring Boot repository **without `azure.yaml`**.
   In the experience discussed here, neither `azd add` nor `azd up` generates
   one. This differs from the current prototype, which materializes
-  `azure.yaml`, Dockerfiles, and Bicep on first `azd up`, and from the
+  `azure.yaml`, Dockerfiles, and Bicep through `azd spring init`, and from the
   materialization proposed in #9840. The persistence model needs a decision
   before implementation.
 - Spring build and configuration files describe the application. Azure-only
@@ -129,7 +154,7 @@ Provisioning success does not demonstrate that application code uses the DB.
 | [#9964](https://github.com/Azure/azure-dev/issues/9964) | Maps outputs to Spring runtime settings; explicitly excludes changes to POM, Gradle, Java, and Spring configuration files. |
 | [#9967](https://github.com/Azure/azure-dev/issues/9967) | Adds composable PostgreSQL infrastructure via `azd add`; explicitly excludes existing-application build, source, and Spring configuration edits. |
 | [#9977](https://github.com/Azure/azure-dev/issues/9977) | Generates a **new** Spring Boot service with its own POM and code; does not patch an existing service. |
-| [#9838](https://github.com/Azure/azure-dev/issues/9838), [#9840](https://github.com/Azure/azure-dev/issues/9840), [#9770](https://github.com/Azure/azure-dev/issues/9770) | Pre-project discovery/inference and extension-contributed `azd add` are unresolved shared contracts. The current `azd add` loads `azure.yaml`; the prototype's no-file hook only handles `azd up`. |
+| [#9838](https://github.com/Azure/azure-dev/issues/9838), [#9840](https://github.com/Azure/azure-dev/issues/9840), [#9770](https://github.com/Azure/azure-dev/issues/9770) | Historical pre-project discovery/inference and extension-contributed `azd add` questions. The prototype's no-file hook has been removed; the explicit-init milestone generates `azure.yaml` before standard deployment. |
 
 To deliver this connection-only `azd add` experience, explicitly assign
 ownership of **opt-in edits to an existing Spring project**, including preview,

@@ -1,12 +1,19 @@
 # Spring Boot and Azure Developer CLI investigation
 
+> Current direction, October 13, 2026: generate deployment files explicitly
+> through `azd spring init`, then use ordinary `azd up`. No prototype core
+> patches remain. Start with the
+> [implementation handoff](./SPRING-BOOT-AZD-EXTENSION-IMPLEMENTATION-INVESTIGATION.md)
+> and [current prototype/test matrix](./cli/azd/extensions/azure.springboot/README.md).
+
 ## Goal
 
 [Azure/azure-dev#9960](https://github.com/Azure/azure-dev/issues/9960) proposes an
 `azure.springboot` extension that can take an existing Spring Boot application
-from source to Azure Container Apps through standard commands such as `azd up`.
-The Spring project should remain the source of truth instead of requiring the
-developer to repeat its structure in `azure.yaml`.
+from source to Azure Container Apps. The first milestone is `azd spring init`
+generating `azure.yaml` and infrastructure, followed by standard `azd up`.
+Spring remains the application source of truth; generated deployment files
+are reviewable artifacts, not a replacement for its build/configuration.
 
 ## Existing extension capabilities
 
@@ -26,6 +33,12 @@ These capabilities are sufficient for a vertical slice that starts with an
 explicit `azure.yaml`: build an executable JAR, provision Container Apps
 infrastructure, deploy it, validate prerequisites, and return its endpoint.
 
+The current prototype needs only the custom-command capability for init;
+ordinary azd handles the generated Java/Container Apps project afterward.
+YAML generation reuses public `project.ProjectConfig`/`project.Save`; Bicep
+uses extension-owned templates. Future provider capabilities below must not
+be mistaken for required registrations in the current implementation.
+
 Relevant documentation:
 
 - [Extension framework](https://github.com/Azure/azure-dev/blob/main/cli/azd/docs/extensions/extension-framework.md)
@@ -33,12 +46,12 @@ Relevant documentation:
 - [Extension SDK reference](https://github.com/Azure/azure-dev/blob/main/cli/azd/docs/extensions/extension-sdk-reference.md)
 - [End-to-end extension walkthrough](https://github.com/Azure/azure-dev/blob/main/cli/azd/docs/extensions/extension-e2e-walkthrough.md)
 
-## Core capability gaps (upstream baseline)
+## Historical core dependencies for automatic initialization
 
-The zero-configuration experience depends on open upstream azd work. A custom
-azd build on the prototype branch already wires an installed Spring extension
-into bare `azd up` without `azure.yaml`; these gaps describe upstream support,
-not a limitation of that prototype build.
+The earlier zero-file/bare-`up` investigation depended on shared upstream
+contracts and a custom azd build. Those prototype changes have been removed.
+The tracked capabilities below concern possible future standard-init or
+automatic-up integration; they do not block explicit `azd spring init`.
 
 | Required behavior | Dependency |
 | --- | --- |
@@ -90,7 +103,7 @@ does not yet resolve the input/output and determinism requirements on its own.
      missing roles before deployment.
    - Keep customer content and secrets out of telemetry.
 
-## First vertical slice
+## Historical first-slice proposal
 
 Use a multi-module Maven repository containing one Spring Boot web service with
 Actuator, PostgreSQL, and Service Bus dependencies. Begin with an explicit
@@ -108,7 +121,8 @@ Maven project
 The spike should produce deterministic output and explain every inference. In
 parallel, the azd team should settle the detection, external-project, and
 project-inference contracts because those contracts determine whether the
-extension can deliver the main promise of Azure/azure-dev#9960.
+extension can deliver the broader automatic-init promise of Azure/azure-dev#9960.
+The explicit-init implementation does not wait for those contracts.
 
 ## Risks observed in the current documentation
 

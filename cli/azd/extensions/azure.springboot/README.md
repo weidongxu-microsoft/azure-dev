@@ -1,5 +1,9 @@
 # Azure Spring Boot extension prototype
 
+This branch is a prototype and knowledge archive, not a release candidate.
+Real implementation will start from a clean branch; use the linked handoff
+for findings, evidence, and unresolved decisions.
+
 This prototype targets:
 
 ```text
@@ -29,6 +33,12 @@ The extension no longer registers an automatic init provider or intercepts
 bare `azd up`. Future standard `azd init` integration can reuse the analyzer
 and generator.
 
+This is an unreleased branch prototype. The explicit `spring init` entry point
+is a milestone-specific exception to the
+[extension guide's verb-first recommendation](../../docs/extensions/extensions-style-guide.md).
+See the [implementation handoff](../../../../SPRING-BOOT-AZD-EXTENSION-IMPLEMENTATION-INVESTIGATION.md)
+for the current direction and remaining work.
+
 ## Analysis and generation
 
 Analysis and generation are separate:
@@ -38,6 +48,19 @@ Analysis and generation are separate:
 2. azd's existing Java detector resolves the effective Maven model.
 3. Runtime dependencies become evidence-backed resource requirements.
 4. Generation consumes only the analysis result.
+
+`azure.yaml` uses main's public `project.ProjectConfig` types and `project.Save`
+writer, staged before the extension's exclusive file writes. These are Go
+library APIs, not host gRPC generation APIs; an independently versioned extension
+must pin its azd module dependency. Other extensions invoke core workflows
+(for example `azure.ai.models`) or embed their own infrastructure templates
+(`azure.ai.agents` and `azure.ai.projects`).
+
+Bicep remains extension-owned. Main's `infra generate` supports resource-based
+scaffolding, but is not a drop-in replacement for these Spring datasource/model
+bindings, ACA secret references, internal ingress, or Actuator probes. Its
+PostgreSQL template also permits all IP addresses. Switching generators would
+require explicitly resolving these differences, not silently dropping them.
 
 Container Apps, Container Registry, Log Analytics, and managed identity are the
 current hosting policy. Other resources are conditional:
@@ -71,24 +94,63 @@ before deployment, and Bicep rejects empty values.
 Actuator is optional; health probes are generated only when its dependency is
 declared.
 
-## Acceptance application
+## Validation status (October 13, 2026)
 
-`testdata/spring-todo` is a Spring Data JDBC application with a standard
-PostgreSQL runtime dependency. It contains no Azure-specific application
-dependency or configuration. Tests use H2 in PostgreSQL compatibility mode.
+Seven application-only cases passed explicit init with stock azd 1.34.2,
+Bicep compilation, and Maven packaging (`package -DskipTests`). The run checked
+application-source preservation, required/absent resources, repeat-init
+overwrite refusal, secret non-disclosure, and one deployable JAR per service.
+It did not build Docker images, deploy Azure resources, or exercise runtime
+connections. The upstream YAML serializer change left all 56 generated
+infrastructure/container files byte-identical.
 
-The generated PostgreSQL binding currently uses a generated administrator
-credential stored in Key Vault. A formal feature should create a least-privilege
-database principal and prefer Microsoft Entra authentication.
+| Case | Application purpose | Generation/binding coverage |
+| --- | --- | --- |
+| `spring-todo` | REST Todo CRUD backed by PostgreSQL | One app, database, datasource variables, and probes |
+| `spring-ai-todo-agent` | Foundry chat with in-memory Todo tools | One app, model deployment, and managed identity; no database |
+| `spring-orders-microservices` | Orders API calls a product catalog and stores orders | Two apps, PostgreSQL, internal/public ingress, URL binding, and library exclusion |
+| `spring-external-openai` | Minimal external OpenAI configuration fixture | Supplied endpoint/key/version; no AI resource inferred |
+| PostgreSQL-before case | Minimal Spring app without a database | No database infrastructure |
+| PostgreSQL-after case | Same app with JDBC/passwordless settings | Database detection; passwordless runtime gap remains |
+| `roryp/sora` | Third-party video-generation app | Existing OpenAI bindings and Spring API-version default |
 
-`testdata/spring-orders-microservices` is a Maven reactor with a shared library,
-an internal catalog service, and a public orders service using PostgreSQL. It
-validates that libraries remain build dependencies without becoming deployment
-units.
+The two-app fixture has three Maven modules: public `orders-service` on port
+8080, internal `catalog-service` on port 8081, and the non-deployable
+`order-contracts` library. Order creation looks up the catalog item's price,
+calculates a total, and writes PostgreSQL. Catalog data is in memory.
 
 `TestSpringInitExistingCases` exercises explicit init on all four checked-in
 fixtures, checking generated services/resources, unchanged application files,
-and repeat-init overwrite protection.
+and repeat-init overwrite protection. Other Go regressions cover command
+consent/flag validation, runtime dependency scopes, optional resources, YAML
+round trips/quoted paths, external bindings, and confined writes. Extension
+Go tests, vet, and build passed.
+
+Earlier live deployments, before the explicit-init pivot, proved Todo CRUD
+and persistence across restart, Foundry managed-identity model/tool calls, and
+orders-to-catalog calls with database persistence. Sora's UI and health/readiness
+checks passed, but video generation was not validated.
+
+## Managed identity and PostgreSQL
+
+Managed identity already supports ACR pulls, Key Vault secret access, and
+Foundry calls. Foundry disables local auth and uses an Azure RBAC assignment.
+PostgreSQL needs database authorization as well: the current analyzer does not
+retain passwordless intent, and its template disables Entra authentication and
+uses a generated administrator password stored in Key Vault.
+
+The intended fix is passwordless binding with a least-privilege app database
+role, not rejection of managed identity. Bicep configures Entra authentication
+and an administrator; a generated, idempotent `postprovision` script can create
+the identity-mapped role and SQL grants. It needs explicit administrator access
+and network reachability and must work through standard azd without the Spring
+extension installed. This script is not implemented. Making the app identity
+an Entra administrator is a simpler but elevated-privilege alternative.
+
+[Spring Petclinic](https://github.com/spring-projects/spring-petclinic) is a
+proposed additional acceptance app, not a completed test. Its default H2 and
+selected PostgreSQL-profile variants should prove that driver presence alone
+does not cause database provisioning.
 
 ## Current boundaries
 
@@ -100,6 +162,9 @@ and repeat-init overwrite protection.
 - Service dependencies require an explicit `*_SERVICE_URL` property contract.
 - Gradle, profile resolution, and existing-resource selection remain future
   work.
+- The prototype compiles in the core Go module and imports `internal/appdetect`;
+  an independently versioned implementation must resolve that coupling.
+- Generated Dockerfiles currently use Java 21, not the detected Java version.
 - Existing Dockerfiles and `.dockerignore` files are protected rather than
   adopted; container-build reuse remains future work.
 - Passwordless PostgreSQL bindings are not supported: generated PostgreSQL

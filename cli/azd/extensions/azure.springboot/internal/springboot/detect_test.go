@@ -297,10 +297,10 @@ func TestGenerateProject(t *testing.T) {
 	require.Contains(t, string(azureYAML), "provider: bicep")
 	require.Contains(t, string(azureYAML), "language: java")
 	require.Contains(t, string(azureYAML), "remoteBuild: true")
-	require.Contains(t, string(azureYAML), "uses:\n      - postgres")
-	require.Contains(t, string(azureYAML), "postgres:\n    type: db.postgres")
-	_, err = azdproject.Load(t.Context(), filepath.Join(root, "azure.yaml"))
+	config, err := azdproject.Load(t.Context(), filepath.Join(root, "azure.yaml"))
 	require.NoError(t, err)
+	require.Equal(t, []string{"postgres"}, config.Services["spring-todo"].Uses)
+	require.Equal(t, azdproject.ResourceTypeDbPostgres, config.Resources["postgres"].Type)
 
 	dockerfile, err := os.ReadFile(filepath.Join(root, "Dockerfile"))
 	require.NoError(t, err)
@@ -338,6 +338,63 @@ func TestGenerateProject(t *testing.T) {
 
 	err = Generate(root, analysis)
 	require.ErrorContains(t, err, "refusing to overwrite existing")
+}
+
+func TestAzureYAMLRoundTrip(t *testing.T) {
+	for _, test := range []struct {
+		name          string
+		path          string
+		dockerContext string
+	}{
+		{name: "root", path: "", dockerContext: "."},
+		{name: "module", path: "api", dockerContext: ".."},
+		{name: "quoted path", path: filepath.Join("services", "api #blue"), dockerContext: ".."},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			analysis := &Analysis{
+				Name: "app",
+				Services: []Project{
+					{Name: "api", Path: test.path, Port: 8080},
+				},
+				Resources: []ResourceRequirement{
+					{Name: "postgres", Type: ResourceTypePostgreSQL, Consumers: []string{"api"}},
+					{Name: "model", Type: ResourceTypeFoundryModel, Consumers: []string{"api"}},
+				},
+			}
+
+			content, err := azureYAML(t.Context(), analysis)
+			require.NoError(t, err)
+			repeated, err := azureYAML(t.Context(), analysis)
+			require.NoError(t, err)
+			require.Equal(t, content, repeated)
+			require.Contains(t, string(content), "# yaml-language-server: $schema=")
+			require.Contains(t, string(content), "/schemas/v1.0/azure.yaml.json")
+			config, err := azdproject.Parse(t.Context(), string(content))
+			require.NoError(t, err)
+			require.Equal(t, "app", config.Name)
+			require.Equal(t, "bicep", string(config.Infra.Provider))
+			require.Equal(t, "infra", config.Infra.Path)
+			require.Nil(t, config.RequiredVersions)
+			require.Len(t, config.Services, 1)
+			service := config.Services["api"]
+			require.NotNil(t, service)
+			expectedPath := filepath.ToSlash(test.path)
+			if expectedPath == "" {
+				expectedPath = "."
+			}
+			require.Equal(t, expectedPath, filepath.ToSlash(service.RelativePath))
+			require.Equal(t, azdproject.ContainerAppTarget, service.Host)
+			require.Equal(t, azdproject.ServiceLanguageJava, service.Language)
+			require.Equal(t, "api", service.Module)
+			require.Equal(t, "./Dockerfile", service.Docker.Path)
+			require.Equal(t, test.dockerContext, service.Docker.Context)
+			require.True(t, service.Docker.RemoteBuild)
+			require.Equal(t, []string{"postgres", "model"}, service.Uses)
+			require.Equal(t, azdproject.ResourceTypeDbPostgres, config.Resources["postgres"].Type)
+			require.Equal(t, azdproject.ResourceTypeOpenAiModel, config.Resources["model"].Type)
+			require.Equal(t, test.path, analysis.Services[0].Path)
+		})
+	}
 }
 
 func TestGenerateProjectWithoutInferredResources(t *testing.T) {
@@ -389,7 +446,9 @@ func TestGenerateSpringOrdersMicroservices(t *testing.T) {
 	require.Contains(t, azureYAML, "project: catalog-service")
 	require.Contains(t, azureYAML, "project: orders-service")
 	require.NotContains(t, azureYAML, "order-contracts:")
-	require.Contains(t, azureYAML, "uses:\n      - catalog-service\n      - postgres")
+	config, err := azdproject.Parse(t.Context(), azureYAML)
+	require.NoError(t, err)
+	require.Equal(t, []string{"catalog-service", "postgres"}, config.Services["orders-service"].Uses)
 	require.Contains(t, azureYAML, "context: ..")
 
 	catalogDockerfile := generatedContent(files, filepath.Join("catalog-service", "Dockerfile"))

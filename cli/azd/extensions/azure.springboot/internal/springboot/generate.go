@@ -14,6 +14,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/azure/azure-dev/cli/azd/pkg/infra/provisioning"
 	"github.com/azure/azure-dev/cli/azd/pkg/project"
 )
 
@@ -108,6 +109,10 @@ func GenerateFiles(analysis *Analysis) ([]GeneratedFile, error) {
 		return nil, fmt.Errorf("analysis name %q is not a normalized project name", analysis.Name)
 	}
 
+	projectFile, err := azureYAML(context.Background(), analysis)
+	if err != nil {
+		return nil, fmt.Errorf("generating azure.yaml: %w", err)
+	}
 	resourceModules, resourceOutputs, err := generateResourceInfrastructure(analysis)
 	if err != nil {
 		return nil, err
@@ -119,7 +124,7 @@ func GenerateFiles(analysis *Analysis) ([]GeneratedFile, error) {
 	)
 
 	files := []GeneratedFile{
-		{Path: "azure.yaml", Content: []byte(azureYAML(analysis))},
+		{Path: "azure.yaml", Content: projectFile},
 		{Path: ".dockerignore", Content: []byte("**/target\n.azure\ninfra\n.git\n.env\n.env.*\n")},
 		{Path: filepath.Join("infra", "main.bicep"), Content: []byte(mainReplacer.Replace(mainBicepTemplate))},
 		{Path: filepath.Join("infra", "main.parameters.json"), Content: []byte(mainParameters)},
@@ -187,55 +192,68 @@ func GenerateFiles(analysis *Analysis) ([]GeneratedFile, error) {
 	return files, nil
 }
 
-func azureYAML(analysis *Analysis) string {
-	var services strings.Builder
-	var resources string
+func azureYAML(ctx context.Context, analysis *Analysis) (content []byte, resultErr error) {
+	config := &project.ProjectConfig{
+		Name:      analysis.Name,
+		Infra:     provisioning.Options{Provider: provisioning.Bicep, Path: "infra"},
+		Services:  make(map[string]*project.ServiceConfig, len(analysis.Services)),
+		Resources: make(map[string]*project.ResourceConfig, len(analysis.Resources)),
+	}
 	for i := range analysis.Services {
-		project := &analysis.Services[i]
-		var uses strings.Builder
-		for _, dependency := range project.Dependencies {
-			fmt.Fprintf(&uses, "      - %s\n", dependency.Service)
+		service := &analysis.Services[i]
+		var uses []string
+		for _, dependency := range service.Dependencies {
+			uses = append(uses, dependency.Service)
 		}
 		for _, resource := range analysis.Resources {
-			if slices.Contains(resource.Consumers, project.Name) {
-				fmt.Fprintf(&uses, "      - %s\n", resource.Name)
+			if slices.Contains(resource.Consumers, service.Name) {
+				uses = append(uses, resource.Name)
 			}
 		}
-		usesBlock := ""
-		if uses.Len() > 0 {
-			usesBlock = "    uses:\n" + uses.String()
-		}
-		projectPath := project.Path
+		projectPath := service.Path
 		dockerContext := ".."
 		if projectPath == "" {
 			projectPath = "."
 			dockerContext = "."
 		}
-		fmt.Fprintf(&services, `  %s:
-    project: %s
-    host: containerapp
-    language: java
-    module: %s
-%s    docker:
-      path: ./Dockerfile
-      context: %s
-      remoteBuild: true
-`, project.Name, projectPath, project.Name, usesBlock, dockerContext)
+		config.Services[service.Name] = &project.ServiceConfig{
+			RelativePath: projectPath,
+			Host:         project.ContainerAppTarget,
+			Language:     project.ServiceLanguageJava,
+			Module:       service.Name,
+			Uses:         uses,
+			Docker: project.DockerProjectOptions{
+				Path: "./Dockerfile", Context: dockerContext, RemoteBuild: true,
+			},
+		}
 	}
 	for _, resource := range analysis.Resources {
-		resources += fmt.Sprintf("  %s:\n    type: %s\n", resource.Name, azureResourceType(resource.Type))
-	}
-	if resources != "" {
-		resources = "resources:\n" + resources
+		config.Resources[resource.Name] = &project.ResourceConfig{
+			Type: project.ResourceType(azureResourceType(resource.Type)),
+		}
 	}
 
-	return fmt.Sprintf(`# yaml-language-server: $schema=https://raw.githubusercontent.com/Azure/azure-dev/main/schemas/v1.0/azure.yaml.json
-name: %s
-infra:
-  provider: bicep
-  path: infra
-services:
-%s%s`, analysis.Name, services.String(), resources)
+	// Save owns YAML validation, quoting, path normalization, and schema annotation.
+	// Stage outside the project so its overwrite behavior cannot bypass our exclusive writer.
+	staging, err := os.MkdirTemp("", "azd-spring-project-")
+	if err != nil {
+		return nil, fmt.Errorf("creating project serialization directory: %w", err)
+	}
+	defer func() {
+		if err := os.RemoveAll(staging); err != nil {
+			resultErr = errors.Join(resultErr, fmt.Errorf("removing project serialization directory: %w", err))
+		}
+	}()
+
+	path := filepath.Join(staging, "azure.yaml")
+	if err := project.Save(ctx, config, path); err != nil {
+		return nil, fmt.Errorf("serializing project configuration: %w", err)
+	}
+	content, err = os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("reading serialized project configuration: %w", err)
+	}
+	return content, nil
 }
 
 func generateResourceInfrastructure(analysis *Analysis) (string, string, error) {
