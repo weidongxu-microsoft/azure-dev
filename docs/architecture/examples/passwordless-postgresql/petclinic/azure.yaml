@@ -1,0 +1,19 @@
+name: petclinic-postgres-mi-proposal
+services:
+  petclinic:
+    project: .
+    host: containerapp
+    language: docker
+    docker:
+      path: .azd-spring/Dockerfile
+      context: .
+      platform: linux/amd64
+infra:
+  provider: bicep
+  path: infra
+  module: main
+hooks:
+  postprovision:
+    shell: pwsh
+    run: python scripts/db.py bootstrap
+    interactive: false

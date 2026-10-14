@@ -1,0 +1,8 @@
+.azure/
+.env
+*.env
+*.log
+__pycache__/
+azd-config/
+docker-config/
+state.json
