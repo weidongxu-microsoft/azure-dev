@@ -138,6 +138,103 @@ func TestResolutionIgnoresAmbientConfiguration(t *testing.T) {
 	require.Len(t, result.Decisions, 1)
 }
 
+func TestResolutionFoundryBinding(t *testing.T) {
+	directory := t.TempDir()
+	writeFixture(t, directory, "pom.xml", "<project/>")
+	writeFixture(t, directory, "src/main/resources/application.properties",
+		"spring.ai.azure.openai.endpoint=${AZURE_OPENAI_ENDPOINT}\n"+
+			"spring.ai.azure.openai.api-key=${AZURE_OPENAI_API_KEY}\n"+
+			"spring.ai.azure.openai.chat.options.deployment-name=${AZURE_OPENAI_DEPLOYMENT_NAME}\n")
+	resolver := staticResolver{model: effectiveModel(t, directory,
+		dependency("org.springframework.ai", "spring-ai-starter-model-azure-openai", "compile"))}
+
+	result, err := AnalyzeProject(t.Context(), directory, resolver, DeploymentInputs{})
+	require.NoError(t, err)
+	require.Empty(t, result.Decisions)
+	require.Empty(t, result.Diagnostics)
+	require.Equal(t, []Resource{{
+		ID: "foundry:primary", Kind: Foundry, Name: "azure-openai", Disposition: Provisioned,
+	}}, result.Resources)
+	require.Len(t, result.Bindings, 1)
+	require.Equal(t, "app/foundry:primary", result.Bindings[0].ID)
+	require.Equal(t, "spring.ai.azure.openai", result.Bindings[0].PropertyPrefix)
+	require.Equal(t, "apiKey", result.Bindings[0].Authentication)
+	require.NotNil(t, result.Bindings[0].Foundry)
+	require.NotEmpty(t, result.Bindings[0].Evidence)
+
+	application, err := result.ResolvedApplication()
+	require.NoError(t, err)
+	require.NotNil(t, application.Foundry)
+	require.Equal(t, "gpt-5.6-sol", application.Foundry.ChatDeploymentName)
+	require.Equal(t, "apiKey", application.Foundry.Authentication)
+}
+
+func TestResolutionFoundryEmbeddingBinding(t *testing.T) {
+	directory := t.TempDir()
+	writeFixture(t, directory, "pom.xml", "<project/>")
+	writeFixture(t, directory, "src/main/resources/application.properties",
+		"spring.ai.model.embedding=azure-openai\n"+
+			"spring.ai.azure.openai.endpoint=${AZURE_OPENAI_ENDPOINT}\n"+
+			"spring.ai.azure.openai.embedding.options.deployment-name="+
+			"${AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME}\n")
+	resolver := staticResolver{model: effectiveModel(t, directory,
+		dependency("org.springframework.ai", "spring-ai-starter-model-azure-openai", "compile"))}
+
+	result, err := AnalyzeProject(t.Context(), directory, resolver, DeploymentInputs{})
+	require.NoError(t, err)
+	require.Len(t, result.Resources, 1)
+	require.Len(t, result.Bindings, 1)
+	require.NotNil(t, result.Bindings[0].Foundry)
+	require.Equal(t, "text-embedding-3-small", result.Bindings[0].Foundry.EmbeddingDeploymentName)
+
+	application, err := result.ResolvedApplication()
+	require.NoError(t, err)
+	require.NotNil(t, application.Foundry)
+	require.Empty(t, application.Foundry.ChatDeploymentName)
+	require.Equal(t, "text-embedding-3-small", application.Foundry.EmbeddingDeploymentName)
+}
+
+func TestResolutionFoundryManagedIdentityBinding(t *testing.T) {
+	directory := t.TempDir()
+	writeFixture(t, directory, "pom.xml", "<project/>")
+	writeFixture(t, directory, "src/main/resources/application.properties",
+		"spring.ai.azure.openai.endpoint=${AZURE_OPENAI_ENDPOINT}\n"+
+			"spring.ai.azure.openai.chat.options.deployment-name=${AZURE_OPENAI_DEPLOYMENT_NAME}\n")
+	resolver := staticResolver{model: effectiveModel(t, directory,
+		dependency("org.springframework.ai", "spring-ai-starter-model-azure-openai", "compile"))}
+
+	result, err := AnalyzeProject(t.Context(), directory, resolver, DeploymentInputs{})
+	require.NoError(t, err)
+	require.Len(t, result.Bindings, 1)
+	require.Equal(t, "managedIdentity", result.Bindings[0].Authentication)
+
+	application, err := result.ResolvedApplication()
+	require.NoError(t, err)
+	require.NotNil(t, application.Foundry)
+	require.Equal(t, "managedIdentity", application.Foundry.Authentication)
+}
+
+func TestResolutionSupportsDatasourceAndFoundry(t *testing.T) {
+	directory := t.TempDir()
+	writeFixture(t, directory, "pom.xml", "<project/>")
+	writeFixture(t, directory, "src/main/resources/application.properties",
+		"spring.datasource.url=jdbc:postgresql://localhost/catalog\n"+
+			"spring.ai.azure.openai.endpoint=${AZURE_OPENAI_ENDPOINT}\n"+
+			"spring.ai.azure.openai.api-key=${AZURE_OPENAI_API_KEY}\n")
+	resolver := staticResolver{model: effectiveModel(t, directory,
+		dependency("org.postgresql", "postgresql", "runtime")+
+			dependency("org.springframework.ai", "spring-ai-starter-model-azure-openai", "compile"))}
+
+	result, err := AnalyzeProject(t.Context(), directory, resolver, DeploymentInputs{})
+	require.NoError(t, err)
+	require.Len(t, result.Resources, 2)
+	require.Len(t, result.Bindings, 2)
+	application, err := result.ResolvedApplication()
+	require.NoError(t, err)
+	require.Len(t, application.Requirements, 1)
+	require.NotNil(t, application.Foundry)
+}
+
 func TestResolutionExternalDrivers(t *testing.T) {
 	for _, tt := range []struct {
 		name, scheme, driver, extra, want, diagnostic string

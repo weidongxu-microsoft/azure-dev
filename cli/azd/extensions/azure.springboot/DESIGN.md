@@ -114,9 +114,13 @@ flowchart TD
 
 The implementation supports one single-module Maven Spring Boot HTTP application
 with executable JAR packaging and Java 17+, using supported in-memory storage or
-at most one external MySQL/PostgreSQL datasource. External databases support password
-authentication; PostgreSQL also supports managed identity. Multiple applications,
-multiple datasource bindings, shared-resource deployment, MySQL managed identity,
+at most one external MySQL/PostgreSQL datasource, plus one Spring AI Azure OpenAI
+binding containing chat, embeddings, or both. External databases support password
+authentication; PostgreSQL also supports managed identity. Foundry supports API-key
+or managed-identity authentication and one pinned deployment per detected modality.
+Chat defaults to `gpt-5.6-sol` version `2026-07-09`; embeddings default to
+`text-embedding-3-small` version `1`. Multiple applications, multiple Foundry
+accounts, shared-resource deployment, MySQL managed identity, custom model selection,
 Gradle, and non-web/HTTPS-only hosting remain unsupported. These limits do not
 restrict the intended model above.
 
@@ -151,3 +155,60 @@ flowchart TD
 as the database administrator; the deployed application uses its non-admin managed
 identity. This example shows lifecycle dependencies, not every parallel operation
 within `azd up`; other database modes omit or replace the bootstrap steps.
+
+## Appendix: Foundry model bindings
+
+Foundry support targets Spring AI Azure OpenAI chat and embedding bindings.
+The acceptance application and reviewed generated output live in the independent
+`azure-dev-spring-extension-tests` repository.
+
+- Detect `spring-ai-starter-model-azure-openai` and the standard endpoint,
+  API-key, selectors, and modality deployment-name properties. Model Foundry
+  separately from datasource bindings so an application may use both.
+- Preserve chat as the legacy default when only shared Azure OpenAI properties
+  are configured. Require explicit selector or deployment-name evidence for
+  embeddings. Reject modality properties that cannot take effect because their
+  selector chooses another provider.
+- Reject a non-empty or unresolved `spring.ai.azure.openai.openai-api-key`;
+  Spring AI gives it precedence and connects to public OpenAI. Pin the
+  deployment-owned value empty so Azure API-key injection cannot activate it.
+- Select API-key authentication when the active API-key property is non-empty.
+  When it is absent or empty, follow Spring AI 1.0.0 semantics and use
+  `DefaultAzureCredential` with the Container App managed identity.
+- Provision a `Microsoft.CognitiveServices/accounts` resource with kind
+  `AIServices`, `allowProjectManagement` enabled, and one account-level
+  `accounts/deployments` resource per detected modality. A Foundry project is
+  not required for direct Azure OpenAI-compatible inference.
+- Parameterize each deployment's model name, version, SKU, and deployment name.
+  Chat defaults to `gpt-5.6-sol` version `2026-07-09`; embeddings default to
+  `text-embedding-3-small` version `1`. Azure upgrades each deployment when its
+  current version expires.
+- Enable local authentication for the key-based Spring AI application. Obtain the
+  key only within Bicep and inject it directly as a Container Apps secret; do not
+  persist it in azd environment values, generated files, outputs, logs, or errors.
+- For managed identity, disable local authentication, grant the bootstrap Container
+  App identity `Cognitive Services OpenAI User` on the account, and generate no key
+  lookup, secret, or API-key environment variable.
+- Apply datasource-password credential rules to the API-key property: inspect
+  active and inactive packaged configuration plus copied external configuration,
+  allow only empty or runtime-placeholder values, and reject literals without
+  disclosure. Any repair remains explicit, interactive, and revalidated.
+- Keep public network access enabled but set the account network ACL default to
+  deny. Allow only the Container App outbound IP addresses, matching the database
+  firewall model. Reprovisioning refreshes this allowlist; stable NAT or private
+  networking remains deferred.
+- Bind the OpenAI-compatible `*.openai.azure.com` endpoint and model deployment
+  through deployment-owned Spring configuration. Bind the account key only in
+  API-key mode; managed identity relies on `DefaultAzureCredential`.
+
+```mermaid
+flowchart TD
+    Init[azd spring init] --> Analyze[Resolve Spring AI Foundry binding]
+    Analyze --> Files[Generate deployment files]
+    Files --> Up[azd up]
+    Up --> Hosting[Create hosting and bootstrap Container App]
+    Hosting --> IPs[Read Container App outbound IPs]
+    IPs --> Foundry[Create network-restricted Foundry account and model deployment]
+    Foundry --> Deploy[Deploy application with key secret or managed identity]
+    Deploy --> Verify[Call the configured model endpoint and validate its response]
+```
